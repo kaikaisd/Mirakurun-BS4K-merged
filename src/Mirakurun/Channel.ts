@@ -151,6 +151,24 @@ export class Channel {
                     channel.commandVars.polarity = channel.polarity;
                 }
             }
+
+            if (channel.satellite && typeof channel.satellite !== "string") {
+                log.error("invalid type of property `satellite` in channel#%d (%s) configuration", i, channel.name);
+                return;
+            }
+            if (channel.space && typeof channel.space !== "number") {
+                log.error("invalid type of property `space` in channel#%d (%s) configuration", i, channel.name);
+                return;
+            }
+            if (channel.freq !== undefined && typeof channel.freq !== "number") {
+                log.error("invalid type of property `freq` in channel#%d (%s) configuration", i, channel.name);
+                return;
+            }
+            if (channel.polarity && channel.polarity !== "H" && channel.polarity !== "V") {
+                log.error("invalid type of property `polarity` in channel#%d (%s) configuration", i, channel.name);
+                return;
+            }
+
             for (const key in channel.commandVars) {
                 if (typeof channel.commandVars[key] !== "number" && typeof channel.commandVars[key] !== "string") {
                     log.error("invalid type of property `commandVars.%s` in channel#%d (%s) configuration", key, i, channel.name);

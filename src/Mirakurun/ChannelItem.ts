@@ -19,11 +19,16 @@ import * as common from "./common";
 import * as apid from "../../api";
 import ServiceItem from "./ServiceItem";
 import TSFilter from "./TSFilter";
+import TLVFilter from "./TLVFilter";
 
 export default class ChannelItem {
     readonly name: string;
     readonly type: apid.ChannelType;
     readonly channel: string;
+    readonly satellite?: string;
+    readonly space?: number;
+    readonly freq?: number;
+    readonly polarity?: "H" | "V";
     readonly tsmfRelTs: number;
     readonly commandVars: apid.ConfigChannelsItem["commandVars"];
     allowedTuners: string[] | undefined;
@@ -34,6 +39,10 @@ export default class ChannelItem {
         this.name = config.name;
         this.type = config.type;
         this.channel = config.channel;
+        this.satellite = config.satellite;
+        this.space = config.space;
+        this.freq = config.freq;
+        this.polarity = config.polarity;
         this.tsmfRelTs = config.tsmfRelTs;
         this.commandVars = config.commandVars;
         this.#configuredAllowedTuners = this._normalizeAllowedTuners(config.allowedTuners);
@@ -57,8 +66,22 @@ export default class ChannelItem {
         return _.service.findByChannel(this);
     }
 
-    getStream(user: common.User, output: stream.Writable): Promise<TSFilter> {
+    getStream(user: common.User, output: stream.Writable): Promise<TSFilter | TLVFilter> {
         return _.tuner.initChannelStream(this, user, output);
+    }
+
+    toJSON(): apid.ConfigChannelsItem {
+        return {
+            type: this.type,
+            channel: this.channel,
+            name: this.name,
+            satellite: this.satellite,
+            space: this.space,
+            freq: this.freq,
+            polarity: this.polarity,
+            tsmfRelTs: this.tsmfRelTs,
+            commandVars: this.commandVars
+        };
     }
 
     private _normalizeAllowedTuners(allowedTuners: string[] | undefined): string[] | undefined {

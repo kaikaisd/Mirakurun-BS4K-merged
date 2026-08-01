@@ -42,6 +42,10 @@ export interface Channel {
     type: ChannelType;
     channel: string;
     name?: string;
+    satellite?: string;
+    space?: number;
+    freq?: number;
+    polarity?: "H" | "V";
     services?: Service[];
 }
 
@@ -330,6 +334,8 @@ export interface ConfigTunersItem {
     decoder?: string;
     /** MMTS processor command for BS4K if needed. */
     mmtsDecoder?: string;
+    /** TLV processor command for BS4K if needed. */
+    tlvDecoder?: string;
     /** `true` to **disable** this tuner. */
     isDisabled?: boolean;
 }
