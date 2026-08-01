@@ -194,8 +194,20 @@ export function generateScanConfig(option: ChannelScanOption): ScanConfig | unde
         ...option
     };
 
+    // Handle BS4K (4K satellite broadcasting) channels.
+    // BS4K channels are TLV streams that are discovered dynamically by walking
+    // the NIT starting from a representative seed stream, so the scan starts from
+    // a single default TLV stream and expands from there (see runChannelScan).
+    if (option.type === "BS4K") {
+        return {
+            channels: ["45328"], // default seed TLV stream
+            scanMode: satelliteOptions.scanMode,
+            setDisabledOnAdd: satelliteOptions.setDisabledOnAdd
+        };
+    }
+
     // Handle BS (Broadcast Satellite) channels
-    if (option.type === "BS" || option.type === "BS4K") {
+    if (option.type === "BS") {
         // Handle subchannel style BS scanning (e.g. BS01_0)
         if (satelliteOptions.useSubCh) {
             const bsSubchOptions = {
@@ -615,6 +627,112 @@ async function runChannelScan(
 
                     continue; // Skip to next channel
                 }
+            }
+
+            // BS4K uses NIT-based discovery instead of a fixed channel range.
+            // A single tune of the seed TLV stream yields the network's NIT, which
+            // lists every TLV stream on the network. We register each of those streams
+            // as a channel. BS4K does not reliably broadcast a per-stream SDT[actual],
+            // so we do NOT re-tune each stream for services (that would require every
+            // one of the ~10 tunes to catch the NIT, which is fragile); per-service
+            // details are filled in at runtime from the live stream instead.
+            if (type === "BS4K") {
+                let seed: { services: apid.Service[], networkStreams: apid.Channel[] };
+                try {
+                    seed = await _.tuner.getNetworkStreams(<any> {
+                        type,
+                        channel
+                    }, {
+                        id: "Mirakurun:API:channelScan",
+                        priority: 1
+                    });
+                } catch (error) {
+                    const isNoSignalError = /stream has closed before get network/.test(String(error));
+                    let errorText = "-> no signal.";
+                    if (!isNoSignalError) {
+                        errorText += ` [${error}]`;
+                    }
+                    errorText += "\n\n";
+                    updateStepStatus(
+                        {
+                            status: "error" as const,
+                            channel,
+                            reason: isNoSignalError ? "no_signal" : String(error),
+                            progress: progressPercent
+                        },
+                        errorText
+                    );
+                    continue;
+                }
+
+                // Collect the seed stream plus every stream listed in its NIT.
+                const streams: apid.Channel[] = [];
+                const seenChannels = new Set<string>();
+                const addStream = (c: apid.Channel): void => {
+                    if (!seenChannels.has(c.channel)) {
+                        seenChannels.add(c.channel);
+                        streams.push(c);
+                    }
+                };
+                addStream({ type: "BS4K", channel });
+                for (const c of seed.networkStreams) {
+                    addStream(c);
+                }
+
+                updateStepStatus(
+                    { status: "services_found" as const, channel, count: streams.length },
+                    `-> ${streams.length} streams found (NIT).\n`
+                );
+
+                // Index any services the seed happened to deliver, by stream id, so we
+                // can use real service names where available.
+                const filteredSeedServices = seed.services.filter(service => serviceTypes.includes(service.type));
+
+                const scannedItems: apid.ConfigChannels = [];
+                for (const c of streams) {
+                    // Skip streams already present in the results.
+                    if (result.some(x => x.channel === c.channel)) {
+                        continue;
+                    }
+
+                    let items: apid.ConfigChannels;
+                    if (c.channel === channel && filteredSeedServices.length > 0) {
+                        // The seed stream delivered an SDT: register its services.
+                        items = generateChannelItems(
+                            scanConfig.scanMode,
+                            type,
+                            c.channel,
+                            filteredSeedServices,
+                            scanConfig.setDisabledOnAdd
+                        );
+                    } else {
+                        // Register the TLV stream itself so it is tunable; service
+                        // details are resolved at runtime from the live stream.
+                        items = [{
+                            name: c.channel,
+                            type,
+                            channel: c.channel
+                        }];
+                    }
+
+                    for (const item of items) {
+                        result.push(item);
+                        newCount++;
+                        scanStatus.newCount = newCount;
+                        scannedItems.push(item);
+                        appendToLog(`-> ${JSON.stringify(item)}\n`);
+                    }
+                }
+
+                updateStepStatus(
+                    {
+                        status: "channels_found" as const,
+                        channel,
+                        items: scannedItems
+                    },
+                    `Found ${scannedItems.length} channels for ${type}\n\n`
+                );
+                continue;
             }
 
             // Scan the channel for services

@@ -222,30 +222,26 @@ describe("[scan.spec] /api/config/channel/scan : generateScanConfig", () => {
         });
     });
 
-    it("BS4K: startCh and endCh", () => {
+    it("BS4K: NIT-seed based, ignores channel ranges", () => {
         const config = scan.generateScanConfig({
-            type: "BS4K",
-            startCh: 7,
-            endCh: 9
+            type: "BS4K"
         });
         assert.deepStrictEqual(config, {
-            channels: ["7", "8", "9"],
+            channels: ["45328"],
             scanMode: "Service",
             setDisabledOnAdd: true
         });
     });
 
-    it("BS4K: useSubCh = true", () => {
+    it("BS4K: range/subCh options do not change the seed", () => {
         const config = scan.generateScanConfig({
             type: "BS4K",
             startCh: 7,
-            endCh: 7,
-            useSubCh: true,
-            startSubCh: 0,
-            endSubCh: 1
+            endCh: 9,
+            useSubCh: true
         });
         assert.deepStrictEqual(config, {
-            channels: ["BS07_0", "BS07_1"],
+            channels: ["45328"],
             scanMode: "Service",
             setDisabledOnAdd: true
         });
