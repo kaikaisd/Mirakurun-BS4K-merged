@@ -80,7 +80,8 @@ export function getStatus(): apid.Status {
         streamCount: {
             tunerDevice: _.tuner.devices.filter(td => td.isUsing === true).length,
             tsFilter: status.streamCount.tsFilter,
-            decoder: status.streamCount.decoder
+            decoder: status.streamCount.decoder,
+            tlvFilter: status.streamCount.tlvFilter
         },
         errorCount: status.errorCount,
         timerAccuracy: {

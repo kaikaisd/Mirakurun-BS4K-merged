@@ -772,6 +772,8 @@ definitions:
             type: integer
           decoder:
             type: integer
+          tlvFilter:
+            type: integer
       errorCount:
         type: object
         properties:

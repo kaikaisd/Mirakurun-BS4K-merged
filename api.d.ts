@@ -438,6 +438,7 @@ export interface Status {
         tunerDevice: number;
         tsFilter: number;
         decoder: number;
+        tlvFilter: number;
     };
     errorCount: {
         uncaughtException: number;
