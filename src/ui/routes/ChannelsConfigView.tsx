@@ -150,15 +150,18 @@ export const ChannelsConfigView: React.FC = () => {
         try {
             const params = new URLSearchParams();
             params.append("type", scanType);
-            params.append("minCh", scanMinCh);
-            params.append("maxCh", scanMaxCh);
+
+            if (scanType !== "BS4K") {
+                params.append("minCh", scanMinCh);
+                params.append("maxCh", scanMaxCh);
+            }
 
             if (scanSkipCh.trim()) {
                 const expandedSkipCh = expandChannelRanges(scanSkipCh.trim());
                 params.append("skipCh", expandedSkipCh);
             }
 
-            if ((scanType === "BS" || scanType === "BS4K") && scanUseSubCh) {
+            if (scanType === "BS" && scanUseSubCh) {
                 params.append("minSubCh", scanMinSubCh);
                 params.append("maxSubCh", scanMaxSubCh);
                 params.append("useSubCh", "true");
@@ -742,8 +745,8 @@ export const ChannelsConfigView: React.FC = () => {
                                             setScanMaxCh("24");
                                             break;
                                         case "BS4K":
-                                            setScanMinCh("7");
-                                            setScanMaxCh("17");
+                                            setScanMinCh("");
+                                            setScanMaxCh("");
                                             break;
                                     }
                                 }}
@@ -757,20 +760,26 @@ export const ChannelsConfigView: React.FC = () => {
                             />
                         </FormGroup>
 
-                        <div style={{ display: "flex", gap: "16px" }}>
-                            <FormGroup label="Min Channel" style={{ flex: 1 }}>
-                                <InputGroup
-                                    value={scanMinCh}
-                                    onChange={(e) => setScanMinCh(e.target.value)}
-                                />
-                            </FormGroup>
-                            <FormGroup label="Max Channel" style={{ flex: 1 }}>
-                                <InputGroup
-                                    value={scanMaxCh}
-                                    onChange={(e) => setScanMaxCh(e.target.value)}
-                                />
-                            </FormGroup>
-                        </div>
+                        {scanType === "BS4K" ? (
+                            <Callout intent="primary">
+                                BS4K は NIT から自動的に全 TLV ストリームを探索します。チャンネル範囲の指定は不要です。
+                            </Callout>
+                        ) : (
+                            <div style={{ display: "flex", gap: "16px" }}>
+                                <FormGroup label="Min Channel" style={{ flex: 1 }}>
+                                    <InputGroup
+                                        value={scanMinCh}
+                                        onChange={(e) => setScanMinCh(e.target.value)}
+                                    />
+                                </FormGroup>
+                                <FormGroup label="Max Channel" style={{ flex: 1 }}>
+                                    <InputGroup
+                                        value={scanMaxCh}
+                                        onChange={(e) => setScanMaxCh(e.target.value)}
+                                    />
+                                </FormGroup>
+                            </div>
+                        )}
 
                         <FormGroup
                             label="Skip Channels (comma separated integers)"
@@ -788,7 +797,7 @@ export const ChannelsConfigView: React.FC = () => {
                             />
                         </FormGroup>
 
-                        {(scanType === "BS" || scanType === "BS4K") && (
+                        {scanType === "BS" && (
                             <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
                                 <Switch
                                     label="Use Subchannel Style (BS01_0)"
