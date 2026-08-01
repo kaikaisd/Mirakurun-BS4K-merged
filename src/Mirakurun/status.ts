@@ -19,7 +19,9 @@ interface Status {
     streamCount: {
         tsFilter: number;
         decoder: number;
+        tlvFilter: number;
     };
+    epgByChannel: { [channel: string]: boolean };
     errorCount: {
         uncaughtException: number;
         unhandledRejection: number;
@@ -40,8 +42,10 @@ const status: Status = {
     rpcCount: 0,
     streamCount: {
         tsFilter: 0,
-        decoder: 0
+        decoder: 0,
+        tlvFilter: 0
     },
+    epgByChannel: {},
     errorCount: {
         uncaughtException: 0,
         unhandledRejection: 0,

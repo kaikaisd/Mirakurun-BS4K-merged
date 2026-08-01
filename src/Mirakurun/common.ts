@@ -39,6 +39,7 @@ interface StreamSetting {
     parseNIT?: boolean;
     parseSDT?: boolean;
     parseEIT?: boolean;
+    filterTlvStreamId?: number;
 }
 
 export interface StreamInfo {
@@ -114,6 +115,13 @@ export function sleep(ms: number): Promise<void> {
     return new Promise(resolve => {
         setTimeout(resolve, ms);
     });
+}
+
+export function decodeUTF8(buffer: Uint8Array | Buffer): string {
+    if (!buffer || buffer.length === 0) {
+        return "";
+    }
+    return Buffer.from(buffer).toString("utf8");
 }
 
 export function getTimeFromMJD(buffer: Uint8Array | Buffer): number {
