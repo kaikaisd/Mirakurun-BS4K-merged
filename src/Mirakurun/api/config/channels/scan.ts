@@ -439,7 +439,7 @@ type ScanStatusUpdate = PhaseScanStatusUpdate | StepScanStatusUpdate | ResultSca
  * @param outputWriter Optional function to write output text during scan
  * @returns Promise resolving to the final channel list
  */
-async function runChannelScan(
+export async function runChannelScan(
     scanConfig: ScanConfig,
     dryRun: boolean,
     type: apid.ChannelType,
@@ -447,6 +447,17 @@ async function runChannelScan(
     outputWriter?: (text: string) => void,
     skipCh: number[] = []
 ): Promise<apid.ConfigChannels> {
+    // BS4K scans are always full NIT re-discovery: a single tune of the seed TLV
+    // stream walks the network's NIT to enumerate every TLV stream on it, and the
+    // set of discovered streams isn't necessarily stable across runs. Treating an
+    // existing BS4K channel as "already configured" (the refresh=false takeover
+    // path below) would short-circuit the NIT walk after re-adding only the seed,
+    // silently dropping every other discovered stream from the saved config. So
+    // BS4K rescans must never take that shortcut.
+    if (type === "BS4K") {
+        refresh = true;
+    }
+
     try {
         // Initialize scan data
         const scanLog: string[] = [];
@@ -691,7 +702,7 @@ async function runChannelScan(
                 const scannedItems: apid.ConfigChannels = [];
                 for (const c of streams) {
                     // Skip streams already present in the results.
-                    if (result.some(x => x.channel === c.channel)) {
+                    if (result.some(x => x.type === type && x.channel === c.channel)) {
                         continue;
                     }
 
@@ -711,7 +722,8 @@ async function runChannelScan(
                         items = [{
                             name: c.channel,
                             type,
-                            channel: c.channel
+                            channel: c.channel,
+                            isDisabled: scanConfig.setDisabledOnAdd
                         }];
                     }
 

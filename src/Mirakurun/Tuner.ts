@@ -435,6 +435,11 @@ export class Tuner {
             },
             ...user
         });
+
+        if (tsFilter === null) {
+            throw new Error("stream has closed before get network");
+        }
+
         return new Promise<{ services: apid.Service[], networkStreams: apid.Channel[] }>((resolve, reject) => {
             let network = {
                 networkId: -1,
@@ -643,9 +648,12 @@ export class Tuner {
                 let output: Writable;
                 let tsFilter: TSFilter | TLVFilter;
 
-                if (setting.channel.type === "BS4K" && device.mmtsDecoder === null) {
+                if (setting.channel.type === "BS4K" && device.mmtsDecoder === null && device.isRemote === false) {
                     // Raw TLV path (e.g. PIX-SMB400): the tuner command outputs
                     // decrypted TLV; TLVFilter parses MMT/TLV natively.
+                    // A remote Mirakurun source delivers TS (already demultiplexed by
+                    // the remote), not raw TLV, so remote BS4K devices must fall
+                    // through to the TSFilter branch below instead.
                     if (user.disableDecoder === true || device.tlvDecoder === null) {
                         output = dest;
                     } else {

@@ -2,6 +2,8 @@ const { describe, it } = require("node:test");
 const assert = require("assert");
 
 const scan = require("../lib/Mirakurun/api/config/channels/scan");
+const shared = require("../lib/Mirakurun/_").default;
+const configModule = require("../lib/Mirakurun/config");
 
 describe("[scan.spec] /api/config/channel/scan : generateScanConfig", () => {
     it("GR: Type only", () => {
@@ -1683,5 +1685,99 @@ describe("[scan.spec] /api/config/channel/scan : generateChannelItems", () => {
             isDisabled: setDisabledOnAdd
         });
         assert.strictEqual("serviceId" in channelItems[0], false);
+    });
+});
+
+describe("[scan.spec] runChannelScan : BS4K NIT rescan regression (Item A)", () => {
+    it("keeps every NIT-discovered TLV stream even when a stale BS4K channel already exists (refresh=false)", async () => {
+        const originalLoadChannels = configModule.loadChannels;
+        const originalSaveChannels = configModule.saveChannels;
+        const originalTuner = shared.tuner;
+
+        // Pre-existing config: a stale BS4K entry for the seed channel (pre-fix,
+        // this alone would trigger the refresh=false takeover shortcut and
+        // `continue` past the NIT walk, dropping every other discovered stream),
+        // plus an unrelated channel of a different type that happens to share a
+        // channel number with one of the streams the NIT walk will discover. That
+        // second entry must survive both the type !== "BS4K" carry-over filter and
+        // the (type-scoped) dedupe check inside the BS4K block.
+        const existingChannels = [
+            { name: "45328", type: "BS4K", channel: "45328", isDisabled: false },
+            { name: "GR45168", type: "GR", channel: "45168", isDisabled: false }
+        ];
+
+        configModule.loadChannels = async () => existingChannels.map(c => ({ ...c }));
+        configModule.saveChannels = async () => {
+            throw new Error("saveChannels should not be called during a dry run");
+        };
+        shared.tuner = {
+            getNetworkStreams: async () => ({
+                services: [],
+                networkStreams: [
+                    { type: "BS4K", channel: "45168" },
+                    { type: "BS4K", channel: "45169" }
+                ]
+            })
+        };
+
+        try {
+            const scanConfig = scan.generateScanConfig({ type: "BS4K" });
+            const result = await scan.runChannelScan(scanConfig, true, "BS4K", false, undefined, []);
+
+            const bs4kItems = result.filter(item => item.type === "BS4K");
+            assert.deepStrictEqual(
+                bs4kItems.map(item => item.channel).sort(),
+                ["45168", "45169", "45328"]
+            );
+
+            // Bare (no-service) BS4K items must honor setDisabledOnAdd (Item A3).
+            for (const item of bs4kItems) {
+                assert.strictEqual(item.isDisabled, true);
+            }
+
+            // The unrelated GR channel sharing a channel number with a discovered
+            // stream must be preserved untouched (type-scoped dedupe, Item A2).
+            const grItem = result.find(item => item.type === "GR");
+            assert.deepStrictEqual(grItem, existingChannels[1]);
+        } finally {
+            configModule.loadChannels = originalLoadChannels;
+            configModule.saveChannels = originalSaveChannels;
+            shared.tuner = originalTuner;
+        }
+    });
+
+    it("still honors the refresh=false takeover for non-BS4K types", async () => {
+        const originalLoadChannels = configModule.loadChannels;
+        const originalSaveChannels = configModule.saveChannels;
+        const originalTuner = shared.tuner;
+
+        const existingChannels = [
+            { name: "existing-gr", type: "GR", channel: "13", isDisabled: false }
+        ];
+
+        configModule.loadChannels = async () => existingChannels.map(c => ({ ...c }));
+        configModule.saveChannels = async () => {
+            throw new Error("saveChannels should not be called during a dry run");
+        };
+        shared.tuner = {
+            getServices: async () => {
+                throw new Error("getServices should not be called: existing config should be taken over");
+            }
+        };
+
+        try {
+            const scanConfig = {
+                channels: ["13"],
+                scanMode: "Channel",
+                setDisabledOnAdd: false
+            };
+            const result = await scan.runChannelScan(scanConfig, true, "GR", false, undefined, []);
+
+            assert.deepStrictEqual(result, existingChannels);
+        } finally {
+            configModule.loadChannels = originalLoadChannels;
+            configModule.saveChannels = originalSaveChannels;
+            shared.tuner = originalTuner;
+        }
     });
 });

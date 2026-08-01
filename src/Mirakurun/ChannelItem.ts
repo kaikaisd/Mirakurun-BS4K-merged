@@ -80,7 +80,8 @@ export default class ChannelItem {
             freq: this.freq,
             polarity: this.polarity,
             tsmfRelTs: this.tsmfRelTs,
-            commandVars: this.commandVars
+            commandVars: this.commandVars,
+            allowedTuners: this.allowedTuners
         };
     }
 

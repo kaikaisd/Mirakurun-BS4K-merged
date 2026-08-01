@@ -24,6 +24,7 @@ const TunerDeviceModule = require("../lib/Mirakurun/TunerDevice");
 const TunerDevice = TunerDeviceModule.default;
 const TunerStartupError = TunerDeviceModule.TunerStartupError;
 const Tuner = require("../lib/Mirakurun/Tuner").default;
+const log = require("../lib/Mirakurun/log");
 
 function createChannel() {
     return new ChannelItem({
@@ -283,5 +284,82 @@ describe("[tuner-device.spec] local-only channel selection", () => {
         channel.setAllowedTuners(["J-GR-1"]);
 
         assert.strictEqual(tuner.hasLocalTunerForChannel(channel), false);
+    });
+});
+
+describe("[tuner-device.spec] TunerDevice#tlvDecoder getter", () => {
+    beforeEach(() => {
+        shared.event = new MirakurunEvent();
+    });
+
+    it("returns null when tlvDecoder is missing/undefined in config", () => {
+        const device = new TunerDevice(0, {
+            name: "J-BS4K-1",
+            types: ["BS4K"],
+            command: "echo"
+        });
+
+        assert.strictEqual(device.tlvDecoder, null);
+    });
+
+    it("returns the configured string when tlvDecoder is set", () => {
+        const device = new TunerDevice(0, {
+            name: "J-BS4K-1",
+            types: ["BS4K"],
+            command: "echo",
+            tlvDecoder: "decode-tlv --stdin"
+        });
+
+        assert.strictEqual(device.tlvDecoder, "decode-tlv --stdin");
+    });
+});
+
+describe("[tuner-device.spec] Tuner#_load tlvDecoder validation", () => {
+    beforeEach(() => {
+        shared.event = new MirakurunEvent();
+    });
+
+    it("accepts tlvDecoder: null and keeps the device registered", () => {
+        shared.config.tuners = [
+            {
+                name: "J-BS4K-1",
+                types: ["BS4K"],
+                command: "echo",
+                tlvDecoder: null
+            }
+        ];
+
+        const tuner = Object.create(Tuner.prototype);
+        tuner._devices = [];
+        tuner._load();
+
+        assert.strictEqual(tuner._devices.length, 1);
+        assert.strictEqual(tuner._devices[0].tlvDecoder, null);
+    });
+
+    it("rejects a non-string, non-null tlvDecoder and skips the tuner (error logged)", () => {
+        shared.config.tuners = [
+            {
+                name: "J-BS4K-1",
+                types: ["BS4K"],
+                command: "echo",
+                tlvDecoder: 123
+            }
+        ];
+
+        const loggedLines = [];
+        const onLog = line => loggedLines.push(line);
+        log.event.on("data", onLog);
+
+        const tuner = Object.create(Tuner.prototype);
+        tuner._devices = [];
+        try {
+            tuner._load();
+        } finally {
+            log.event.removeListener("data", onLog);
+        }
+
+        assert.strictEqual(tuner._devices.length, 0);
+        assert.ok(loggedLines.some(line => /tlvDecoder/.test(line)));
     });
 });

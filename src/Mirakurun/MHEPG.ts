@@ -379,10 +379,10 @@ function getLangCode(buffer: Buffer): string {
 function getRelatedProgramItem(event: any): apid.ProgramRelatedItem {
     return {
         type: (
-            this.group_type === 1 ? "shared" :
-                (this.group_type === 2 || this.group_type === 4) ? "relay" : "movement"
+            this.groupType === 1 ? "shared" :
+                (this.groupType === 2 || this.groupType === 4) ? "relay" : "movement"
         ),
-        networkId: event.original_network_id,
+        networkId: event.originalNetworkId,
         serviceId: event.serviceId,
         eventId: event.eventId
     };
