@@ -26,6 +26,7 @@ import status from "./status";
 import Event from "./Event";
 import ChannelItem from "./ChannelItem";
 import TSFilter from "./TSFilter";
+import TLVFilter from "./TLVFilter";
 import Client, { ProgramsQuery } from "../client";
 import { REMOTE_EXIT_CHANNEL_UNAVAILABLE } from "../remoteExitCodes";
 import { TSHandoffBuffer, TSHandoffOptions, TSHandoffProbe } from "./TSHandoff";
@@ -42,7 +43,7 @@ export class TunerStartupError extends Error {
 }
 
 interface User extends common.User {
-    _stream?: TSFilter | TSHandoffBuffer;
+    _stream?: TSFilter | TLVFilter | TSHandoffBuffer;
 }
 
 export interface TunerDeviceStatus {
@@ -132,6 +133,10 @@ export default class TunerDevice extends EventEmitter {
 
     get mmtsDecoder(): string {
         return this._config.mmtsDecoder || null;
+    }
+
+    get tlvDecoder(): string {
+        return this._config.tlvDecoder || null;
     }
 
     get isAvailable(): boolean {
@@ -240,7 +245,7 @@ export default class TunerDevice extends EventEmitter {
         await this._kill(true);
     }
 
-    async startStream(user: User, stream: TSFilter, channel?: ChannelItem, recoverUnavailable = false): Promise<void> {
+    async startStream(user: User, stream: TSFilter | TLVFilter, channel?: ChannelItem, recoverUnavailable = false): Promise<void> {
         log.debug("TunerDevice#%d start stream for user `%s` (priority=%d)...", this._index, user.id, user.priority);
         let waitForRemoteStream = false;
 

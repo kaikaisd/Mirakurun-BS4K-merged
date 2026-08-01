@@ -20,6 +20,7 @@ import * as apid from "../../api";
 import Event from "./Event";
 import ChannelItem from "./ChannelItem";
 import TSFilter from "./TSFilter";
+import TLVFilter from "./TLVFilter";
 
 export default class ServiceItem {
     static getId(networkId: number, serviceId: number): number {
@@ -165,7 +166,7 @@ export default class ServiceItem {
         return ret;
     }
 
-    getStream(userRequest: common.UserRequest, output: stream.Writable): Promise<TSFilter> {
+    getStream(userRequest: common.UserRequest, output: stream.Writable): Promise<TSFilter | TLVFilter> {
         return _.tuner.initServiceStream(this, userRequest, output);
     }
 

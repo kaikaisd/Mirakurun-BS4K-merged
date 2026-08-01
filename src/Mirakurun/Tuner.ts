@@ -22,6 +22,7 @@ import TunerDevice, { TunerDeviceStatus, TunerStartupError } from "./TunerDevice
 import ChannelItem from "./ChannelItem";
 import ServiceItem from "./ServiceItem";
 import TSFilter from "./TSFilter";
+import TLVFilter from "./TLVFilter";
 import TSDecoder from "./TSDecoder";
 import { TSHandoffOptions } from "./TSHandoff";
 
@@ -228,7 +229,7 @@ export class Tuner {
         };
     }
 
-    initChannelStream(channel: ChannelItem, userReq: common.UserRequest, output: Writable): Promise<TSFilter> {
+    initChannelStream(channel: ChannelItem, userReq: common.UserRequest, output: Writable): Promise<TSFilter | TLVFilter> {
         let networkId: number;
 
         const services = channel.getServices();
@@ -250,7 +251,7 @@ export class Tuner {
         return this._getDevicesByChannel(channel).some(device => device.isRemote === false);
     }
 
-    initServiceStream(service: ServiceItem, userReq: common.UserRequest, output: Writable): Promise<TSFilter> {
+    initServiceStream(service: ServiceItem, userReq: common.UserRequest, output: Writable): Promise<TSFilter | TLVFilter> {
         return this._initTS({
             ...userReq,
             streamSetting: {
@@ -262,7 +263,7 @@ export class Tuner {
         }, output);
     }
 
-    initProgramStream(program: apid.Program, userReq: common.UserRequest, output: Writable): Promise<TSFilter> {
+    initProgramStream(program: apid.Program, userReq: common.UserRequest, output: Writable): Promise<TSFilter | TLVFilter> {
         return this._initTS({
             ...userReq,
             streamSetting: {
@@ -320,6 +321,9 @@ export class Tuner {
     }
 
     async getServices(channel: ChannelItem, user: Partial<common.User> = {}): Promise<apid.Service[]> {
+        const tlvStreamIdNum = channel.type === "BS4K" ? parseInt(channel.channel, 10) : NaN;
+        const filterTlvStreamId = Number.isFinite(tlvStreamIdNum) ? tlvStreamIdNum : undefined;
+
         const devices = this._getDevicesByChannel(channel);
         const remoteDevice = this._getRemoteOnlyDevice(devices);
 
@@ -354,7 +358,8 @@ export class Tuner {
             streamSetting: {
                 channel,
                 parseNIT: true,
-                parseSDT: true
+                parseSDT: true,
+                filterTlvStreamId
             },
             ...user
         });
@@ -399,6 +404,80 @@ export class Tuner {
                     }
 
                     resolve(services);
+                }
+            });
+        });
+    }
+
+    /**
+     * Discover the TLV streams of a BS4K network from the NIT, used by the channel
+     * scanner. Unlike getServices(), this resolves as soon as the NIT is parsed and
+     * does NOT require an SDT: BS4K broadcasts do not reliably deliver a per-stream
+     * SDT[actual] for the tuned TLV stream, so requiring services would hang here.
+     * Any services that do arrive within a short grace period are returned too.
+     */
+    async getNetworkStreams(
+        channel: ChannelItem,
+        user: Partial<common.User> = {}
+    ): Promise<{ services: apid.Service[], networkStreams: apid.Channel[] }> {
+        const tlvStreamIdNum = channel.type === "BS4K" ? parseInt(channel.channel, 10) : NaN;
+        const filterTlvStreamId = Number.isFinite(tlvStreamIdNum) ? tlvStreamIdNum : undefined;
+
+        const tsFilter = await this._initTS({
+            id: "Mirakurun:getNetworkStreams()",
+            priority: -1,
+            disableDecoder: true,
+            streamSetting: {
+                channel,
+                parseNIT: true,
+                parseSDT: true,
+                filterTlvStreamId
+            },
+            ...user
+        });
+        return new Promise<{ services: apid.Service[], networkStreams: apid.Channel[] }>((resolve, reject) => {
+            let network = {
+                networkId: -1,
+                areaCode: -1,
+                remoteControlKeyId: -1
+            };
+            let services: apid.Service[] = [];
+            let networkStreams: apid.Channel[] = [];
+            let graceTimer: NodeJS.Timeout = null;
+
+            const hardTimeout = setTimeout(() => tsFilter.close(), 60000);
+
+            tsFilter.on("networkStreams", _networkStreams => {
+                networkStreams = _networkStreams;
+            });
+            tsFilter.on("services", _services => {
+                services = _services;
+            });
+
+            tsFilter.once("network", _network => {
+                network = _network;
+                if (graceTimer === null) {
+                    graceTimer = setTimeout(() => tsFilter.close(), 3000);
+                }
+            });
+
+            tsFilter.once("close", () => {
+                clearTimeout(hardTimeout);
+                clearTimeout(graceTimer);
+                tsFilter.removeAllListeners("network");
+                tsFilter.removeAllListeners("services");
+                tsFilter.removeAllListeners("networkStreams");
+
+                if (network.networkId === -1) {
+                    reject(new Error("stream has closed before get network"));
+                } else {
+                    if (network.remoteControlKeyId !== -1) {
+                        services.forEach(service => {
+                            service.remoteControlKeyId = network.remoteControlKeyId;
+                        });
+                    }
+
+                    resolve({ services, networkStreams });
                 }
             });
         });
@@ -482,6 +561,11 @@ export class Tuner {
                 return;
             }
 
+            if (tuner.tlvDecoder !== undefined && tuner.tlvDecoder !== null && typeof tuner.tlvDecoder !== "string") {
+                log.error("invalid type of property `tlvDecoder` in tuner#%s configuration", i);
+                return;
+            }
+
             if (tuner.decoder !== undefined && typeof tuner.decoder !== "string") {
                 log.error("invalid type of property `decoder` in tuner#%s configuration", i);
                 return;
@@ -501,7 +585,7 @@ export class Tuner {
         return this;
     }
 
-    private async _initTS(user: common.User, dest?: Writable): Promise<TSFilter | null> {
+    private async _initTS(user: common.User, dest?: Writable): Promise<TSFilter | TLVFilter | null> {
         const setting = user.streamSetting;
 
         if (_.config.server.disableEITParsing === true) {
@@ -514,7 +598,7 @@ export class Tuner {
         let tryCount = 50;
         let handoffTried = false;
 
-        if (!dest) {
+        if (!dest && setting.channel.type !== "BS4K") {
             const remoteResult = await this._useRemoteData(user, devices);
             if (remoteResult) {
                 return null;
@@ -557,26 +641,54 @@ export class Tuner {
             } else {
                 // found
                 let output: Writable;
-                if (user.disableDecoder === true || device.decoder === null || setting.channel.type === "BS4K") {
-                    output = dest;
+                let tsFilter: TSFilter | TLVFilter;
+
+                if (setting.channel.type === "BS4K" && device.mmtsDecoder === null) {
+                    // Raw TLV path (e.g. PIX-SMB400): the tuner command outputs
+                    // decrypted TLV; TLVFilter parses MMT/TLV natively.
+                    if (user.disableDecoder === true || device.tlvDecoder === null) {
+                        output = dest;
+                    } else {
+                        output = new TSDecoder({
+                            output: dest,
+                            command: device.tlvDecoder
+                        });
+                    }
+
+                    tsFilter = new TLVFilter({
+                        output,
+                        networkId: setting.networkId,
+                        serviceId: setting.serviceId,
+                        eventId: setting.eventId,
+                        parseNIT: setting.parseNIT,
+                        parseSDT: setting.parseSDT,
+                        parseEIT: setting.parseEIT,
+                        tsmfRelTs: setting.channel.tsmfRelTs,
+                        channel: setting.channel.channel,
+                        filterTlvStreamId: setting.filterTlvStreamId
+                    });
                 } else {
-                    output = new TSDecoder({
-                        output: dest,
-                        command: device.decoder
+                    if (user.disableDecoder === true || device.decoder === null || setting.channel.type === "BS4K") {
+                        output = dest;
+                    } else {
+                        output = new TSDecoder({
+                            output: dest,
+                            command: device.decoder
+                        });
+                    }
+
+                    tsFilter = new TSFilter({
+                        output,
+                        networkId: setting.networkId,
+                        serviceId: setting.serviceId,
+                        eventId: setting.eventId,
+                        passthrough: dest !== undefined && setting.channel.type === "BS4K" && disableMMTSDecoder === true,
+                        parseNIT: setting.parseNIT,
+                        parseSDT: setting.parseSDT,
+                        parseEIT: setting.parseEIT,
+                        tsmfRelTs: setting.channel.tsmfRelTs
                     });
                 }
-
-                const tsFilter = new TSFilter({
-                    output,
-                    networkId: setting.networkId,
-                    serviceId: setting.serviceId,
-                    eventId: setting.eventId,
-                    passthrough: dest !== undefined && setting.channel.type === "BS4K" && disableMMTSDecoder === true,
-                    parseNIT: setting.parseNIT,
-                    parseSDT: setting.parseSDT,
-                    parseEIT: setting.parseEIT,
-                    tsmfRelTs: setting.channel.tsmfRelTs
-                });
 
                 Object.defineProperty(user, "streamInfo", {
                     get: () => tsFilter.streamInfo
