@@ -81,6 +81,7 @@ export default class TunerDevice extends EventEmitter {
     private _cooldownUntil = 0;
     private _lastCooldownLogUntil = 0;
     private _lastDataAt = 0;
+    private _commandFailed = false;
 
     constructor(private _index: number, private _config: apid.ConfigTunersItem) {
         super();
@@ -504,6 +505,7 @@ export default class TunerDevice extends EventEmitter {
         this._channel = ch;
         this._streamUsesMMTSDecoder = false;
         this._lastDataAt = 0;
+        this._commandFailed = false;
 
         if (this._config.dvbDevicePath) {
             const cat = child_process.spawn("cat", [this._config.dvbDevicePath]);
@@ -540,6 +542,7 @@ export default class TunerDevice extends EventEmitter {
         this._process.once("error", (err) => {
             log.fatal("TunerDevice#%d process error `%s` (pid=%d)", this._index, err.name, this._process.pid);
 
+            this._commandFailed = true;
             ++this._fatalCount;
             if (this._fatalCount >= 3) {
                 log.fatal("TunerDevice#%d has something fault! **RESTART REQUIRED** after fix it.", this._index);
@@ -557,6 +560,7 @@ export default class TunerDevice extends EventEmitter {
                 this._index, code, signal, this._process.pid
             );
 
+            this._commandFailed = code !== 0 || signal !== null;
             this._startCooldownIfNeeded(code, signal);
             this._end();
             setTimeout(this._release.bind(this), this._config.dvbDevicePath ? 1000 : 100);
@@ -832,8 +836,8 @@ export default class TunerDevice extends EventEmitter {
         this._stream = null;
 
         if (this._closing === false && this._users.size !== 0) {
-            if (this._isRemote === true) {
-                log.warn("TunerDevice#%d remote stream failed; ending users instead of respawning on the same tuner", this._index);
+            if (this._commandFailed === true || this._isRemote === true) {
+                log.warn("TunerDevice#%d stream failed; ending users instead of respawning on the same tuner", this._index);
                 this.emit("streamFailure", this._channel);
                 for (const user of this._users) {
                     user._stream.end();

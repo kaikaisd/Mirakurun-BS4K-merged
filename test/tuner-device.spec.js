@@ -144,6 +144,38 @@ describe("[tuner-device.spec] remote stream startup", () => {
     });
 });
 
+describe("[tuner-device.spec] failed command release", () => {
+    it("ends users instead of respawning a failed command", () => {
+        const device = new TunerDevice(0, {
+            name: "PT4K-1",
+            types: ["BS4K"],
+            command: "hiraku test"
+        });
+        const channel = createChannel();
+        const output = createStream();
+
+        device._process = new EventEmitter();
+        device._process.stderr = new EventEmitter();
+        device._stream = new EventEmitter();
+        device._channel = channel;
+        device._commandFailed = true;
+        device._users.add({
+            id: "Mirakurun:getServices()",
+            priority: -1,
+            streamSetting: { channel },
+            _stream: output
+        });
+
+        let respawned = false;
+        device._spawn = () => respawned = true;
+        device._release();
+
+        assert.strictEqual(output.closed, true);
+        assert.strictEqual(device.users.length, 0);
+        assert.strictEqual(respawned, false);
+    });
+});
+
 describe("[tuner-device.spec] remote source circuit breaker", () => {
     it("groups tuner devices from the same remote source", () => {
         const tuner = Object.create(Tuner.prototype);
