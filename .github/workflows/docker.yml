@@ -133,6 +133,10 @@ jobs:
       - name: Docker meta
         id: meta
         uses: docker/metadata-action@v5
+        env:
+          # What we tag here is the manifest list, so annotate at index level.
+          # The default ("manifest") would annotate nothing on an index.
+          DOCKER_METADATA_ANNOTATIONS_LEVELS: index
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
@@ -145,7 +149,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to ${{ env.REGISTRY }}
+      - name: Log in to ghcr.io
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -155,23 +159,43 @@ jobs:
       - name: Create manifest list and push
         working-directory: ${{ runner.temp }}/digests
         run: |
-          # Build argv as an array. The `$(jq ... @sh)` one-liner from the docker
-          # docs breaks here: annotations carry the repo description, which has
-          # spaces, and command substitution word-splits it while leaving the
-          # quotes @sh added as literal characters.
+          # DOCKER_METADATA_OUTPUT_JSON is flat: {tags, tag-names, labels, annotations}.
+          # The `.target."docker-metadata-action"` shape belongs to the separate bake
+          # file ($DOCKER_METADATA_OUTPUT_BAKE_FILE), not to this variable.
+          #
+          # argv is assembled as an array rather than via the `$(jq ... @sh)` idiom
+          # from the docker docs: annotations carry the repo description, which has
+          # spaces, and command substitution word-splits it while leaving the quotes
+          # @sh added as literal characters.
           args=()
           while IFS= read -r annotation; do
-            [ -n "$annotation" ] && args+=(--annotation "$annotation")
-          done < <(jq -r '(.target."docker-metadata-action".annotations // [])[] | select(startswith("index:"))' <<< "$DOCKER_METADATA_OUTPUT_JSON")
+            if [ -n "$annotation" ]; then
+              args+=(--annotation "$annotation")
+            fi
+          done < <(jq -r '.annotations[]? | select(startswith("index:"))' <<< "$DOCKER_METADATA_OUTPUT_JSON")
+
+          tag_count=0
           while IFS= read -r tag; do
-            [ -n "$tag" ] && args+=(--tag "$tag")
-          done < <(jq -r '(.target."docker-metadata-action".tags // [])[]' <<< "$DOCKER_METADATA_OUTPUT_JSON")
+            if [ -n "$tag" ]; then
+              args+=(--tag "$tag")
+              tag_count=$((tag_count + 1))
+            fi
+          done < <(jq -r '.tags[]?' <<< "$DOCKER_METADATA_OUTPUT_JSON")
+
+          # Fail loudly rather than pushing an untagged or unannotated index if the
+          # metadata schema ever moves again.
+          if [ "$tag_count" -eq 0 ]; then
+            echo "::error::no tags in DOCKER_METADATA_OUTPUT_JSON: $DOCKER_METADATA_OUTPUT_JSON"
+            exit 1
+          fi
+
           for digest in *; do
             args+=("${REGISTRY}/${IMAGE_NAME}@sha256:${digest}")
           done
+
+          echo "docker buildx imagetools create ${args[*]}"
           docker buildx imagetools create "${args[@]}"
 
       - name: Inspect image
         run: |
-          docker buildx imagetools inspect \
-            "$(jq -cr '.target."docker-metadata-action".tags[0]' <<< "$DOCKER_METADATA_OUTPUT_JSON")"
+          docker buildx imagetools inspect "$(jq -r '.tags[0]' <<< "$DOCKER_METADATA_OUTPUT_JSON")"
