@@ -155,12 +155,23 @@ jobs:
       - name: Create manifest list and push
         working-directory: ${{ runner.temp }}/digests
         run: |
-          docker buildx imagetools create \
-            $(jq -cr '.target."docker-metadata-action".annotations | map(select(startswith("index:")) | "--annotation " + (. | @sh)) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
-            $(jq -cr '.target."docker-metadata-action".tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
-            $(printf "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@sha256:%s " *)
+          # Build argv as an array. The `$(jq ... @sh)` one-liner from the docker
+          # docs breaks here: annotations carry the repo description, which has
+          # spaces, and command substitution word-splits it while leaving the
+          # quotes @sh added as literal characters.
+          args=()
+          while IFS= read -r annotation; do
+            [ -n "$annotation" ] && args+=(--annotation "$annotation")
+          done < <(jq -r '(.target."docker-metadata-action".annotations // [])[] | select(startswith("index:"))' <<< "$DOCKER_METADATA_OUTPUT_JSON")
+          while IFS= read -r tag; do
+            [ -n "$tag" ] && args+=(--tag "$tag")
+          done < <(jq -r '(.target."docker-metadata-action".tags // [])[]' <<< "$DOCKER_METADATA_OUTPUT_JSON")
+          for digest in *; do
+            args+=("${REGISTRY}/${IMAGE_NAME}@sha256:${digest}")
+          done
+          docker buildx imagetools create "${args[@]}"
 
       - name: Inspect image
         run: |
           docker buildx imagetools inspect \
-            "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$(jq -cr '.target."docker-metadata-action".args.DOCKER_META_VERSION' <<< "$DOCKER_METADATA_OUTPUT_JSON")"
+            "$(jq -cr '.target."docker-metadata-action".tags[0]' <<< "$DOCKER_METADATA_OUTPUT_JSON")"
