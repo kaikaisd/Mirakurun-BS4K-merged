@@ -15,6 +15,7 @@
 */
 import * as fs from "fs";
 import * as http from "http";
+import * as https from "https";
 import * as querystring from "querystring";
 import * as yaml from "js-yaml";
 import { OpenAPIV2 } from "openapi-types";
@@ -115,6 +116,10 @@ export class Client {
     agent: http.Agent | boolean;
     /** provide User-Agent string to identify client. */
     userAgent = "";
+    /** use HTTPS instead of HTTP. required when the server is behind a TLS proxy. */
+    tls = false;
+    /** headers sent with every request, e.g. credentials for an authenticating proxy. */
+    headers: { [key: string]: string } = {};
 
     private _userAgent = `MirakurunClient/${pkg.version} Node/${process.version} (${process.platform})`;
     private _docs: OpenAPIV2.Document;
@@ -525,7 +530,8 @@ export class Client {
         const opt: http.RequestOptions = {
             method: method,
             path: this.basePath + path,
-            headers: option.headers || {},
+            // per-request headers win over the client-wide defaults
+            headers: { ...this.headers, ...(option.headers || {}) },
             agent: this.agent
         };
 
@@ -564,8 +570,10 @@ export class Client {
             (<any> opt).signal = option.signal;
         }
 
+        const request = this.tls === true ? https.request : http.request;
+
         return new Promise((resolve, reject) => {
-            const req = http.request(opt, res => {
+            const req = request(opt, res => {
                 if (res.statusCode > 300 && res.statusCode < 400 && res.headers.location) {
                     if (/^\//.test(res.headers.location) === false) {
                         reject(new Error(`Redirecting location "${res.headers.location}" isn't supported.`));

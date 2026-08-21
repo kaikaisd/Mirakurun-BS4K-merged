@@ -25,6 +25,8 @@ import * as apid from "../../api";
 import status from "./status";
 import Event from "./Event";
 import ChannelItem from "./ChannelItem";
+import { buildSignalCommand, runSignalCommand, SignalCheckOptions } from "./SignalChecker";
+import { getRemoteChildEnv, getRemoteConnection, getRemotePort, describeRemoteConnection } from "./remoteClient";
 import TSFilter from "./TSFilter";
 import TLVFilter from "./TLVFilter";
 import Client, { ProgramsQuery } from "../client";
@@ -82,6 +84,7 @@ export default class TunerDevice extends EventEmitter {
     private _lastCooldownLogUntil = 0;
     private _lastDataAt = 0;
     private _commandFailed = false;
+    private _checkingSignal = false;
 
     constructor(private _index: number, private _config: apid.ConfigTunersItem) {
         super();
@@ -149,7 +152,16 @@ export default class TunerDevice extends EventEmitter {
     }
 
     get isFree(): boolean {
-        return this._isAvailable === true && this._channel === null && this._users.size === 0;
+        return this._isAvailable === true && this._checkingSignal === false &&
+            this._channel === null && this._users.size === 0;
+    }
+
+    get isCheckingSignal(): boolean {
+        return this._checkingSignal;
+    }
+
+    get signalCommand(): string | null {
+        return this._config.commandSignal || null;
     }
 
     get isUsing(): boolean {
@@ -209,6 +221,9 @@ export default class TunerDevice extends EventEmitter {
         if (ignoreAvailability === false && this._isAvailable === false) {
             return false;
         }
+        if (this._checkingSignal === true) {
+            return false;
+        }
         if (channel && this._config.types.includes(channel.type) === false) {
             return false;
         }
@@ -240,6 +255,56 @@ export default class TunerDevice extends EventEmitter {
             isUsing: this.isUsing,
             isFault: this.isFault
         };
+    }
+
+    canCheckSignal(channel: ChannelItem): boolean {
+        if (this.signalCommand === null) {
+            return false;
+        }
+        if (this._isRemote === true) {
+            return false;
+        }
+
+        return this.isFree === true && this.canStartStream(channel);
+    }
+
+    /**
+     * Run the configured signal check command against a channel.
+     *
+     * The device is leased for the whole check so the tuner manager will not
+     * hand it to a stream midway: the command drives the hardware directly and
+     * cannot share it.
+     */
+    async checkSignal(channel: ChannelItem, options: SignalCheckOptions): Promise<string> {
+        if (this.signalCommand === null) {
+            throw new Error(util.format("TunerDevice#%d has no `commandSignal` configured", this._index));
+        }
+        if (this._checkingSignal === true) {
+            throw new Error(util.format("TunerDevice#%d is already checking signal", this._index));
+        }
+        if (this.isFree === false) {
+            throw new Error(util.format("TunerDevice#%d is not free", this._index));
+        }
+
+        const command = buildSignalCommand(this.signalCommand, channel);
+
+        this._checkingSignal = true;
+        this._command = command;
+        log.info(
+            "TunerDevice#%d checking signal for channel `%s` (%s) using `%s`",
+            this._index, channel.channel, channel.type, command
+        );
+        Event.emit("tuner", "update", this.toJSON());
+
+        try {
+            await runSignalCommand(command, options);
+            return command;
+        } finally {
+            this._checkingSignal = false;
+            this._command = null;
+            log.info("TunerDevice#%d finished checking signal", this._index);
+            Event.emit("tuner", "update", this.toJSON());
+        }
     }
 
     async kill(): Promise<void> {
@@ -450,9 +515,19 @@ export default class TunerDevice extends EventEmitter {
             throw new Error(util.format("TunerDevice#%d is not remote device", this._index));
         }
 
+        const connection = getRemoteConnection(this.config);
+        for (const name of connection.missingEnv) {
+            log.error(
+                "TunerDevice#%d remote credential references environment variable `%s`, which is not set",
+                this._index, name
+            );
+        }
+
         const client = new Client();
-        client.host = this.config.remoteMirakurunHost;
-        client.port = this.config.remoteMirakurunPort || 40772;
+        client.host = connection.host;
+        client.port = connection.port;
+        client.tls = connection.tls;
+        client.headers = connection.headers;
         client.userAgent = "Mirakurun (Remote)";
 
         log.debug("TunerDevice#%d fetching remote programs from %s:%d...", this._index, client.host, client.port);
@@ -476,7 +551,7 @@ export default class TunerDevice extends EventEmitter {
         if (this._isRemote === true) {
             cmd = "node lib/remote";
             cmd += " " + this._config.remoteMirakurunHost;
-            cmd += " " + (this._config.remoteMirakurunPort || 40772);
+            cmd += " " + getRemotePort(this._config);
             cmd += " " + common.getTuningChannelType(ch.type);
             cmd += " " + ch.channel;
             if (this._config.remoteMirakurunDecoder === true) {
@@ -500,7 +575,24 @@ export default class TunerDevice extends EventEmitter {
 
         const parsed = common.parseCommandForSpawn(cmd);
 
-        this._process = child_process.spawn(parsed.command, parsed.args);
+        const spawnOptions: child_process.SpawnOptions = {};
+        if (this._isRemote === true) {
+            const connection = getRemoteConnection(this._config);
+            for (const name of connection.missingEnv) {
+                log.error(
+                    "TunerDevice#%d remote credential references environment variable `%s`, which is not set",
+                    this._index, name
+                );
+            }
+            const childEnv = getRemoteChildEnv(this._config);
+            if (Object.keys(childEnv).length > 0) {
+                // never on the command line: it is published by GET /api/tuners
+                spawnOptions.env = { ...process.env, ...childEnv };
+            }
+            log.debug("TunerDevice#%d remote target is %s", this._index, describeRemoteConnection(connection));
+        }
+
+        this._process = child_process.spawn(parsed.command, parsed.args, spawnOptions);
         this._command = cmd;
         this._channel = ch;
         this._streamUsesMMTSDecoder = false;

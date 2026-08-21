@@ -316,6 +316,15 @@ export interface ConfigTunersItem {
     command?: string;
     /** [chardev][dvb] command to get BS4K/MMTS. Falls back to `command` when omitted. */
     commandBS4K?: string;
+    /**
+     * command to measure the signal level of a channel. no default: supply the
+     * command for whichever tuner program you use.
+     * the level is read from the command's stdout or stderr as a decimal
+     * followed by `dB`, so both of the usual tools work as-is:
+     * @example "recisdb checksignal --device /dev/px4video0 --channel <channel>"
+     * @example "checksignal --device /dev/pt1video0 <channel>"
+     */
+    commandSignal?: string;
     /** [dvb] dvr adapter device path */
     dvbDevicePath?: string;
     /** Optional device path checked before starting this tuner. Falls back to dvbDevicePath when omitted. */
@@ -330,6 +339,26 @@ export interface ConfigTunersItem {
     remoteMirakurunDecoder?: boolean;
     /** [remote] `true` to allow the upstream Mirakurun to select another remote tuner. Default: `false`. */
     remoteMirakurunAllowNested?: boolean;
+    /**
+     * [remote] `true` to connect over HTTPS. required when the upstream is published
+     * through a TLS proxy such as Cloudflare Zero Trust.
+     * changes the default port to 443.
+     */
+    remoteMirakurunTLS?: boolean;
+    /**
+     * [remote] Cloudflare Access service token Client ID, sent as the
+     * `CF-Access-Client-Id` header. requires `remoteMirakurunTLS`.
+     * supports `${ENV_VAR}` to read the value from the environment instead of
+     * storing it in the config file.
+     */
+    remoteMirakurunCfAccessClientId?: string;
+    /**
+     * [remote] Cloudflare Access service token Client Secret, sent as the
+     * `CF-Access-Client-Secret` header. requires `remoteMirakurunTLS`.
+     * supports `${ENV_VAR}`; prefer that, since this file is readable through
+     * `GET /api/config/tuners`.
+     */
+    remoteMirakurunCfAccessClientSecret?: string;
     /** CAS processor command if needed. */
     decoder?: string;
     /** MMTS processor command for BS4K if needed. */
@@ -341,6 +370,40 @@ export interface ConfigTunersItem {
 }
 
 export type ConfigChannels = ConfigChannelsItem[];
+
+export interface SignalSample {
+    /** unix time in milliseconds. */
+    time: number;
+    /** carrier-to-noise ratio in dB, or null when the command does not report it. */
+    level: number | null;
+    /** signal strength in dBm, or null when the command does not report it. */
+    strength: number | null;
+}
+
+export interface SignalCheckResult {
+    type: ChannelType;
+    channel: string;
+    /** index of the tuner that performed the check. */
+    tunerIndex: number;
+    /** name of the tuner that performed the check. */
+    tunerName: string;
+    /** the resolved command line that was run. */
+    command: string;
+    /** every reading taken during the check, oldest first. */
+    samples: SignalSample[];
+    /** lowest C/N in dB, or null when none was measured. */
+    min: number | null;
+    /** highest C/N in dB, or null when none was measured. */
+    max: number | null;
+    /** mean C/N in dB, or null when none was measured. */
+    average: number | null;
+    /** lowest signal strength in dBm, or null when none was measured. */
+    strengthMin: number | null;
+    /** highest signal strength in dBm, or null when none was measured. */
+    strengthMax: number | null;
+    /** mean signal strength in dBm, or null when none was measured. */
+    strengthAverage: number | null;
+}
 
 export interface ConfigChannelsItem {
     name: string;

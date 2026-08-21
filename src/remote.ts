@@ -17,6 +17,11 @@ import * as apid from "../api";
 import Client from "./client";
 import { IncomingMessage } from "http";
 import { REMOTE_EXIT_CHANNEL_UNAVAILABLE, REMOTE_EXIT_SOURCE_UNAVAILABLE } from "./remoteExitCodes";
+import {
+    getRemoteConnectionFromEnv,
+    describeRemoteConnection,
+    CF_ACCESS_CLIENT_ID_HEADER
+} from "./Mirakurun/remoteClient";
 
 process.title = "Mirakurun: Remote";
 
@@ -35,11 +40,19 @@ const opt = {
 
 console.error("remote:", opt);
 
+// the connection arrives in the environment, not argv: the command line is
+// published by GET /api/tuners and visible to other local processes
+const connection = getRemoteConnectionFromEnv(opt.host, opt.port);
+
+console.error("remote:", "connecting to", describeRemoteConnection(connection));
+
 let stream: IncomingMessage;
 
 const client = new Client();
-client.host = opt.host;
-client.port = opt.port;
+client.host = connection.host;
+client.port = connection.port;
+client.tls = connection.tls;
+client.headers = connection.headers;
 client.userAgent = "Mirakurun (Remote)";
 
 client.getChannelStream({
@@ -57,8 +70,22 @@ client.getChannelStream({
         if (err.req) {
             console.error("remote:", "(error)", err.req.path, err.statusCode, err.statusMessage);
             exit(err.statusCode === 404 ? REMOTE_EXIT_CHANNEL_UNAVAILABLE : REMOTE_EXIT_SOURCE_UNAVAILABLE);
+        } else if (typeof err.status === "number") {
+            // an ErrorResponse from the client: the upstream answered, unhappily
+            console.error("remote:", "(error)", err.status, err.statusText);
+            if (err.status === 401 || err.status === 403) {
+                // the most likely cause once an Access-protected upstream is configured
+                console.error(
+                    "remote:", "the upstream rejected this request.",
+                    connection.headers[CF_ACCESS_CLIENT_ID_HEADER]
+                        ? "check that the Cloudflare Access service token is valid and permitted by the application policy."
+                        : "if it is published through Cloudflare Zero Trust, set " +
+                          "`remoteMirakurunCfAccessClientId` and `remoteMirakurunCfAccessClientSecret`."
+                );
+            }
+            exit(err.status === 404 ? REMOTE_EXIT_CHANNEL_UNAVAILABLE : REMOTE_EXIT_SOURCE_UNAVAILABLE);
         } else {
-            console.error("remote:", "(error)", err.address, err.code);
+            console.error("remote:", "(error)", err.address, err.code, err.message || "");
             exit(REMOTE_EXIT_SOURCE_UNAVAILABLE);
         }
     });

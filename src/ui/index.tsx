@@ -37,6 +37,7 @@ import { LogsView } from "./routes/LogsView";
 import { ServerConfigView } from "./routes/ServerConfigView";
 import { TunersConfigView } from "./routes/TunersConfigView";
 import { ChannelsConfigView } from "./routes/ChannelsConfigView";
+import { SignalView } from "./routes/SignalView";
 import { HomeView } from "./routes/HomeView";
 import { AboutView } from "./routes/AboutView";
 
@@ -84,6 +85,7 @@ const Index: React.FC = () => {
                     <Route path="epg/search" element={<SearchView />} />
                     <Route path="jobs" element={<JobsView />} />
                     <Route path="logs" element={<LogsView />} />
+                    <Route path="signal" element={<SignalView />} />
                     <Route path="config/server" element={<ServerConfigView />} />
                     <Route path="config/tuners" element={<TunersConfigView />} />
                     <Route path="config/channels" element={<ChannelsConfigView />} />

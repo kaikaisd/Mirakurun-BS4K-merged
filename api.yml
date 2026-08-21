@@ -597,6 +597,77 @@ definitions:
     items:
       $ref: '#/definitions/ConfigTunersItem'
 
+  SignalSample:
+    type: object
+    required:
+      - time
+    properties:
+      time:
+        type: integer
+        format: int64
+        description: unix time in milliseconds.
+      level:
+        type: number
+        format: float
+        x-nullable: true
+        description: carrier-to-noise ratio in dB, or null when not reported.
+      strength:
+        type: number
+        format: float
+        x-nullable: true
+        description: signal strength in dBm, or null when not reported.
+
+  SignalCheckResult:
+    type: object
+    required:
+      - type
+      - channel
+      - tunerIndex
+      - tunerName
+      - command
+      - samples
+    properties:
+      type:
+        $ref: '#/definitions/ChannelType'
+      channel:
+        type: string
+      tunerIndex:
+        type: integer
+      tunerName:
+        type: string
+      command:
+        type: string
+      samples:
+        type: array
+        items:
+          $ref: '#/definitions/SignalSample'
+      min:
+        type: number
+        format: float
+        x-nullable: true
+      max:
+        type: number
+        format: float
+        x-nullable: true
+      average:
+        type: number
+        format: float
+        x-nullable: true
+        description: mean C/N in dB.
+      strengthMin:
+        type: number
+        format: float
+        x-nullable: true
+      strengthMax:
+        type: number
+        format: float
+        x-nullable: true
+      strengthAverage:
+        type: number
+        format: float
+        x-nullable: true
+        description: mean signal strength in dBm.
+
   ConfigTunersItem:
     type: object
     required:
@@ -613,6 +684,8 @@ definitions:
         type: string
       commandBS4K:
         type: string
+      commandSignal:
+        type: string
       dvbDevicePath:
         type: string
       checkDevicePath:
@@ -627,6 +700,19 @@ definitions:
         type: boolean
       remoteMirakurunAllowNested:
         type: boolean
+      remoteMirakurunTLS:
+        type: boolean
+        description: connect to the remote Mirakurun over HTTPS. changes the default port to 443.
+      remoteMirakurunCfAccessClientId:
+        type: string
+        description: >-
+          Cloudflare Access service token Client ID, sent as the CF-Access-Client-Id header.
+          supports ${ENV_VAR} to read the value from the environment.
+      remoteMirakurunCfAccessClientSecret:
+        type: string
+        description: >-
+          Cloudflare Access service token Client Secret, sent as the CF-Access-Client-Secret header.
+          supports ${ENV_VAR}; prefer that over storing the secret in the config file.
       decoder:
         type: string
       mmtsDecoder:

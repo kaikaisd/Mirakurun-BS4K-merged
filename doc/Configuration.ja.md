@@ -121,6 +121,63 @@
 
 `BS` / `CS` と `BS4K` を同じチューナーで扱う場合、`commandBS4K` を指定すると `BS4K` チャンネルだけ別コマンドで起動できます。省略時は `command` が使われます。`BS4K` コマンドの出力に MMTS 変換が必要な場合は `mmtsDecoder` を指定します。
 
+#### remoteMirakurunTLS / Cloudflare Zero Trust
+
+`remoteMirakurunTLS: true` を指定すると、リモート Mirakurun へ HTTP ではなく HTTPS で接続します。TLS プロキシ経由で公開されている場合に必要で、既定ポートが `40772` から `443` に変わります。
+
+リモートが [Cloudflare Zero Trust](https://developers.cloudflare.com/cloudflare-one/) の背後にある場合は、Access の[サービストークン](https://developers.cloudflare.com/cloudflare-one/identity/service-tokens/)で認証します。Mirakurun は `CF-Access-Client-Id` と `CF-Access-Client-Secret` ヘッダーを、そのリモートへの全リクエスト (ストリーム・サービススキャン・番組同期、および最初に取得する OpenAPI ドキュメント) に付与します。
+
+```yaml
+- name: RemoteTuner
+  types:
+    - GR
+  remoteMirakurunHost: tuner.example.com
+  remoteMirakurunTLS: true
+  remoteMirakurunCfAccessClientId: ${CF_ACCESS_CLIENT_ID}
+  remoteMirakurunCfAccessClientSecret: ${CF_ACCESS_CLIENT_SECRET}
+```
+
+ID とシークレットは必ず両方設定してください。また両方とも `remoteMirakurunTLS: true` を必要とします (Access は HTTPS のみを保護するため、平文 HTTP ではトークンが到達しません)。設定が不完全な場合、Mirakurun は認証なしで通信せず、そのチューナーの読み込みを拒否します。
+
+**シークレットはこのファイルに書かないでください。** `${VAR}` 形式の値は起動時に環境変数から読み込まれます。`GET /api/config/tuners` はチューナー設定をそのまま返すため、直接書いた場合は API にアクセスできる全員がシークレットを読み取れてしまいます。
+
+```sh
+CF_ACCESS_CLIENT_ID=1a2b3c....access CF_ACCESS_CLIENT_SECRET=... mirakurun start
+```
+
+値全体が `${VAR}` の場合のみ参照として扱われ、それ以外はそのままの文字列として使用されます。環境変数が未設定の場合は、変数名を示すエラーを記録し、`${VAR}` という文字列を送信するのではなく認証情報なしとして扱います。
+
+認証情報がコマンドラインに渡されることはありません。`lib/remote` 子プロセスへは環境変数で渡します。起動コマンドは `GET /api/tuners` で公開され、同一ホストの他プロセスからも参照できるためです。
+
+#### commandSignal
+
+チャンネルの信号レベルを測定するコマンドを指定します。**既定値はありません。** お使いのチューナープログラムに合わせて入力してください。いずれかのチューナーに設定するまで、Web UI の信号レベルページ (および `GET /api/channels/{type}/{channel}/signal`) は使用できません。
+
+測定値はコマンドの標準出力または標準エラー出力から、単位によって判別して読み取ります。そのため主要なツールはラッパーなしでそのまま使用できます。
+
+- `dB` -> **C/N** (搬送波対雑音比・信号品質)
+- `dBm` -> **SIG** (信号強度・チューナー入力の電力)
+
+```yaml
+  # recisdb (https://github.com/kazuki0824/recisdb-rs) -- 標準出力に "12.34dB" を出力
+  commandSignal: recisdb checksignal --device /dev/px4video0 --channel <channel>
+
+  # recpt1 (https://github.com/stz2012/recpt1) -- 標準エラー出力に "C/N = 30.500000dB" を出力
+  commandSignal: checksignal --device /dev/pt1video0 <channel>
+
+  # dvbv5-zap -- 標準エラー出力に両方の単位を1行で出力:
+  #   Lock   (0x1f) Quality= Good Signal= -21.05dBm C/N= 22.50dB UCB= 0 postBER= 0
+  commandSignal: dvbv5-zap -a 0 -c /path/to/dvbv5_channels_isdbt.conf -m -t 0 <channel>
+```
+
+コマンドが報告した値のみを表示します。一方しか報告しないコマンドの場合、もう一方は推測せず空欄になります。
+
+C/N には判定を表示します (`30` 以上で良好、`15` 以上で普通、それ未満は不良。recpt1 と同じ基準)。**SIG には意図的に判定を表示しません。** 適切な入力レベルはチューナーの AGC 範囲に依存し、強すぎることも (アッテネーターで対処する) 実際の不具合要因であるため、機器を問わず通用する dBm の基準値は存在しないからです。アッテネーター調整時などにお使いの機器での相対比較に利用し、それに対して C/N がどう変化するかを確認してください。
+
+ドライバーが相対値のみを報告するチューナーでは、dB/dBm ではなくパーセント (`Signal= 65.00%`) が出力されます。これらは認識しません。誤った数値を表示するより、何も表示しない方針です。
+
+`command` と同じテンプレート変数 (`<channel>`, `<type>`, `commandVars`) が展開されます。上記のコマンドはいずれも停止するまで動作し続けますが、測定終了時またはクライアント切断時に Mirakurun がプロセスを終了させます。測定中はチューナーを占有するため、ストリーミング中のチューナーで信号確認が実行されることはありません。
+
 #### checkDevicePath
 
 このチューナーを開始する前に存在確認するデバイスパスを指定します。パスが存在しない場合、Mirakurun はこのチューナーをスキップして次の一致するチューナーを試します。`checkDevicePath` が未指定の場合、`dvbDevicePath` が設定されていればそれを事前確認パスとして使用します。
