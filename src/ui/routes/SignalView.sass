@@ -1,12 +1,22 @@
 @use "~@blueprintjs/colors/lib/scss/colors"
 
 #route-signal-view
+  // #root is height:100vh/overflow:hidden and #page absolutely fills it, so a
+  // route has to be its own scroll container -- otherwise long content simply
+  // grows past the fold and is clipped away with no way to reach it.
+  position: absolute
+  top: 0
+  right: 0
+  bottom: 0
+  left: 0
+  overflow-y: auto
+  overflow-x: hidden
+
   .content
     display: flex
     flex-direction: column
     gap: 16px
     padding: 20px
-    overflow-y: auto
 
   .title
     margin: 0
@@ -24,7 +34,13 @@
     top: 0
     z-index: 2
     padding: 8px 0
-    background: inherit
+    margin: 0 -20px
+    padding-left: 20px
+    padding-right: 20px
+    background: colors.$light-gray4
+
+    .bp5-dark &
+      background: colors.$dark-gray4
 
     .bp5-input-group
       min-width: 240px
@@ -49,6 +65,20 @@
       align-items: center
       gap: 8px
       margin: 0
+      min-height: 24px
+
+      .group-actions
+        margin-left: auto
+        display: flex
+        align-items: center
+        gap: 8px
+        text-transform: none
+        letter-spacing: 0
+
+      .group-progress
+        font-size: 12px
+        opacity: 0.9
+        font-variant-numeric: tabular-nums
       font-size: 13px
       letter-spacing: 0.06em
       text-transform: uppercase
@@ -126,6 +156,10 @@
 
         b
           font-size: 16px
+
+      .result-count
+        font-size: 11px
+        opacity: 0.5
 
       .result-none
         font-size: 12px
