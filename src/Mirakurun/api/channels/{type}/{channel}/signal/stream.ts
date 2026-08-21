@@ -97,6 +97,12 @@ export const get: Operation = async (req, res) => {
         const result = await _.tuner.checkSignal(channel, {
             duration: duration * 1000,
             signal: abort.signal,
+            onStart: info => {
+                // selection already succeeded here, so deferring headers has done
+                // its job and the client can be told which tuner it got
+                begin();
+                write({ type: "start", ...info });
+            },
             onSample: sample => {
                 begin();
                 samples.push(sample);
@@ -136,8 +142,11 @@ get.apiDoc = {
     tags: ["channels"],
     operationId: "getChannelSignalStream",
     description:
-        "Streams signal level readings as newline-delimited JSON while the check runs. " +
-        "Each line is `{\"type\":\"sample\",\"time\":<ms>,\"level\":<dB>}`.",
+        "Streams the check as newline-delimited JSON while it runs. " +
+        "A `start` line names the tuner, then one `sample` line per reading " +
+        "(`{\"type\":\"sample\",\"time\":<ms>,\"level\":<dB>,\"strength\":<dBm>}`), " +
+        "then an `end` line carrying the summary. `level` and `strength` are null when the " +
+        "command does not report that unit.",
     produces: ["application/x-ndjson"],
     responses: {
         200: {

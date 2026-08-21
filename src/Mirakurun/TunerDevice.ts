@@ -297,6 +297,7 @@ export default class TunerDevice extends EventEmitter {
         Event.emit("tuner", "update", this.toJSON());
 
         try {
+            options.onStart?.({ tunerIndex: this._index, tunerName: this._config.name, command });
             await runSignalCommand(command, options);
             return command;
         } finally {

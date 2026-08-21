@@ -131,9 +131,21 @@ export class SignalLevelParser {
     }
 }
 
+export interface SignalCheckStart {
+    readonly tunerIndex: number;
+    readonly tunerName: string;
+    readonly command: string;
+}
+
 export interface SignalCheckOptions {
     /** stop after this many milliseconds. */
     readonly duration: number;
+    /**
+     * called once the tuner is chosen and the command is built, before it runs.
+     * the caller learns which tuner is busy while the check is still going,
+     * rather than only after it ends.
+     */
+    readonly onStart?: (info: SignalCheckStart) => void;
     /** called for every reading as it arrives. */
     readonly onSample: (sample: SignalSample) => void;
     /** resolves early when the caller goes away. */
