@@ -34,6 +34,9 @@ const typesIndex: ChannelType[] = ["GR", "GR-ALT", "BS", "CS", "SKY", "BS4K"];
 /** Readings kept for the sparkline; ~2 minutes at one per second. */
 const MAX_HISTORY = 120;
 
+/** Readings taken per channel when measuring a whole group. */
+const BATCH_SAMPLES = 10;
+
 /**
  * Signal quality thresholds, in dB, following the bands recpt1 itself uses for
  * its audible feedback (`recpt1core.c`): >= 30 good, >= 15 fair, below poor.
@@ -89,6 +92,8 @@ function stat(values: number[]): Stat | null {
 
 const channelKey = (ch: ConfigChannelsItem) => `${ch.type}/${ch.channel}`;
 
+const settle = (ms: number) => new Promise<void>(resolve => window.setTimeout(resolve, ms));
+
 /**
  * C/N and signal strength are plotted on their own scales: dB readings sit
  * around 0..35, dBm readings are negative, so one shared axis would flatten
@@ -136,7 +141,12 @@ export const SignalView: React.FC = () => {
     const [connecting, setConnecting] = useState<boolean>(false);
     const [results, setResults] = useState<{ [key: string]: Result }>({});
 
+    const [batch, setBatch] = useState<{ type: ChannelType; done: number; total: number }>(null);
+
     const abortRef = useRef<AbortController>(null);
+    // bumped whenever a run is superseded; a group loop stops as soon as its own
+    // token is no longer current, so a stale loop can never outlive its replacement
+    const batchRunRef = useRef<number>(0);
     const cardRefs = useRef<{ [key: string]: HTMLDivElement }>({});
 
     useEffect(() => {
@@ -162,13 +172,23 @@ export const SignalView: React.FC = () => {
     }, []);
 
     const stop = useCallback(() => {
+        // also ends a group run: the loop checks its token before each channel
+        batchRunRef.current++;
         abortRef.current?.abort();
         abortRef.current = null;
         setActiveKey(null);
         setConnecting(false);
+        setBatch(null);
     }, []);
 
-    const start = useCallback((channel: ConfigChannelsItem) => {
+    /**
+     * Run one check and resolve when it ends.
+     *
+     * `maxSamples` bounds it: a group run takes a fixed number of readings per
+     * channel so it advances on its own, while a single check is open-ended so
+     * you can watch it while adjusting an antenna.
+     */
+    const runCheck = useCallback(async (channel: ConfigChannelsItem, maxSamples: number): Promise<string | null> => {
         abortRef.current?.abort();
 
         const key = channelKey(channel);
@@ -186,96 +206,169 @@ export const SignalView: React.FC = () => {
             cardRefs.current[key]?.scrollIntoView({ block: "nearest", behavior: "smooth" });
         });
 
-        (async () => {
-            const collected: Sample[] = [];
-            try {
-                const res = await fetch(
-                    `/api/channels/${channel.type}/${encodeURIComponent(channel.channel)}/signal/stream?duration=600`,
-                    { signal: abort.signal }
-                );
+        const collected: Sample[] = [];
+        let reachedTarget = false;
+        let failure: string = null;
 
-                if (res.ok === false) {
-                    let reason = `HTTP ${res.status}`;
-                    try {
-                        const body = await res.json();
-                        if (body?.reason) {
-                            reason = body.reason;
-                        }
-                    } catch (_) {
-                        // non-JSON error body; the status is all we have
+        try {
+            const res = await fetch(
+                `/api/channels/${channel.type}/${encodeURIComponent(channel.channel)}/signal/stream?duration=600`,
+                { signal: abort.signal }
+            );
+
+            if (res.ok === false) {
+                let reason = `HTTP ${res.status}`;
+                try {
+                    const body = await res.json();
+                    if (body?.reason) {
+                        reason = body.reason;
                     }
-                    setCheckError(reason);
-                    setResults(prev => ({
-                        ...prev,
-                        [key]: { cn: null, sig: null, count: 0, at: Date.now(), error: reason }
-                    }));
-                    setConnecting(false);
-                    setActiveKey(null);
+                } catch (_) {
+                    // non-JSON error body; the status is all we have
+                }
+                setCheckError(reason);
+                setResults(prev => ({
+                    ...prev,
+                    [key]: prev[key]?.count
+                        ? { ...prev[key], error: reason }
+                        : { cn: null, sig: null, count: 0, at: Date.now(), error: reason }
+                }));
+                return reason;
+            }
+
+            setConnecting(false);
+
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            let buf = "";
+
+            read: for (;;) {
+                const { done, value } = await reader.read();
+                if (done) {
+                    break;
+                }
+                buf += decoder.decode(value, { stream: true });
+
+                const lines = buf.split("\n");
+                buf = lines.pop();
+
+                for (const line of lines) {
+                    if (line.trim() === "") {
+                        continue;
+                    }
+                    let msg: any;
+                    try {
+                        msg = JSON.parse(line);
+                    } catch (_) {
+                        continue;
+                    }
+                    if (msg.type === "sample") {
+                        const sample: Sample = {
+                            time: msg.time,
+                            level: msg.level ?? null,
+                            strength: msg.strength ?? null
+                        };
+                        collected.push(sample);
+                        setSamples(prev => [...prev, sample].slice(-MAX_HISTORY));
+                        if (collected.length >= maxSamples) {
+                            // enough for this channel: release the tuner and move on
+                            reachedTarget = true;
+                            abort.abort();
+                            break read;
+                        }
+                    } else if (msg.type === "start" || msg.type === "end") {
+                        setTunerName(msg.tunerName);
+                    } else if (msg.type === "error") {
+                        setCheckError(msg.message);
+                    }
+                }
+            }
+        } catch (e) {
+            // aborting once the target is reached is a normal finish, not a failure
+            if (reachedTarget === false && abort.signal.aborted === false) {
+                failure = e instanceof Error ? e.message : String(e);
+                setCheckError(failure);
+                setResults(prev => ({
+                    ...prev,
+                    [key]: prev[key]?.count
+                        ? { ...prev[key], error: failure }
+                        : { cn: null, sig: null, count: 0, at: Date.now(), error: failure }
+                }));
+            }
+        } finally {
+            setConnecting(false);
+            if (collected.length > 0) {
+                setResults(prev => ({
+                    ...prev,
+                    [key]: {
+                        cn: stat(collected.map(s => s.level).filter((v): v is number => v !== null)),
+                        sig: stat(collected.map(s => s.strength).filter((v): v is number => v !== null)),
+                        count: collected.length,
+                        at: Date.now()
+                    }
+                }));
+            }
+            setActiveKey(prev => (prev === key ? null : prev));
+        }
+
+        return collected.length > 0 ? null : (failure || "no readings");
+    }, []);
+
+    const start = useCallback((channel: ConfigChannelsItem) => {
+        batchRunRef.current++; // a manual pick supersedes any group run
+        setBatch(null);
+        void runCheck(channel, Infinity);
+    }, [runCheck]);
+
+    /** Measure every channel of a group in turn, BATCH_SAMPLES readings each. */
+    const startGroup = useCallback(async (type: ChannelType, list: ConfigChannelsItem[]) => {
+        const run = ++batchRunRef.current;
+        setBatch({ type, done: 0, total: list.length });
+
+        for (let i = 0; i < list.length; i++) {
+            if (batchRunRef.current !== run) {
+                return;
+            }
+            setBatch({ type, done: i, total: list.length });
+            // one tuner at a time, so the channels run in sequence
+            let failure = await runCheck(list[i], BATCH_SAMPLES);
+
+            if (failure !== null && batchRunRef.current === run) {
+                // on a single-tuner box the previous channel's tuner may still be
+                // releasing, which reads as "busy"; give it a moment and retry once
+                await settle(2000);
+                if (batchRunRef.current !== run) {
                     return;
                 }
-
-                setConnecting(false);
-
-                const reader = res.body.getReader();
-                const decoder = new TextDecoder();
-                let buf = "";
-
-                for (;;) {
-                    const { done, value } = await reader.read();
-                    if (done) {
-                        break;
-                    }
-                    buf += decoder.decode(value, { stream: true });
-
-                    const lines = buf.split("\n");
-                    buf = lines.pop();
-
-                    for (const line of lines) {
-                        if (line.trim() === "") {
-                            continue;
-                        }
-                        let msg: any;
-                        try {
-                            msg = JSON.parse(line);
-                        } catch (_) {
-                            continue;
-                        }
-                        if (msg.type === "sample") {
-                            const sample: Sample = {
-                                time: msg.time,
-                                level: msg.level ?? null,
-                                strength: msg.strength ?? null
-                            };
-                            collected.push(sample);
-                            setSamples(prev => [...prev, sample].slice(-MAX_HISTORY));
-                        } else if (msg.type === "start" || msg.type === "end") {
-                            setTunerName(msg.tunerName);
-                        } else if (msg.type === "error") {
-                            setCheckError(msg.message);
-                        }
-                    }
-                }
-            } catch (e) {
-                if (abort.signal.aborted === false) {
-                    setCheckError(e instanceof Error ? e.message : String(e));
-                }
-            } finally {
-                setConnecting(false);
-                if (collected.length > 0) {
-                    setResults(prev => ({
-                        ...prev,
-                        [key]: {
-                            cn: stat(collected.map(s => s.level).filter((v): v is number => v !== null)),
-                            sig: stat(collected.map(s => s.strength).filter((v): v is number => v !== null)),
-                            count: collected.length,
-                            at: Date.now()
-                        }
-                    }));
-                }
-                setActiveKey(prev => (prev === key ? null : prev));
+                failure = await runCheck(list[i], BATCH_SAMPLES);
             }
-        })();
-    }, []);
+
+            // A tuner still busy after the retry is in use by something else --
+            // a recording or an EPG job. Racing through the rest would just mark
+            // every remaining channel as failed, so stop and say why.
+            if (failure !== null && /busy/i.test(failure) === true) {
+                setBatch(null);
+                setCheckError(
+                    `チューナーが使用中のため ${type} の一括測定を中断しました ` +
+                    `(${i} / ${list.length} 完了)。録画や EPG 取得の終了後に再実行してください。`
+                );
+                return;
+            }
+
+            // brief gap so the tuner is free before the next channel claims it
+            await settle(400);
+        }
+
+        if (batchRunRef.current === run) {
+            setBatch({ type, done: list.length, total: list.length });
+            // leave the finished count on screen briefly, then clear
+            window.setTimeout(() => {
+                if (batchRunRef.current === run) {
+                    setBatch(null);
+                }
+            }, 2000);
+        }
+    }, [runCheck]);
 
     const enabled = useMemo(
         () => (channels || []).filter(ch => ch.isDisabled !== true),
@@ -323,6 +416,7 @@ export const SignalView: React.FC = () => {
     }
 
     const configuredTuners = tuners.filter(t => !!t.commandSignal && t.isDisabled !== true);
+    const busy = activeKey !== null || batch !== null;
     const types = typesIndex.filter(t => enabled.some(ch => ch.type === t));
     const shown = groups.reduce((n, [, list]) => n + list.length, 0);
 
@@ -382,7 +476,7 @@ export const SignalView: React.FC = () => {
                         </>}
                     </div>
                     : <div className="card-result">
-                        {result?.error
+                        {result?.error && !result.count
                             ? <span className="result-error" title={result.error}>{result.error}</span>
                             : result
                                 ? <>
@@ -400,6 +494,12 @@ export const SignalView: React.FC = () => {
                                         </span>
                                     )}
                                     {!result.cn && !result.sig && <span className="result-none">値を取得できませんでした</span>}
+                                    {(result.cn || result.sig) && (
+                                        <span className="result-count">{result.count}回</span>
+                                    )}
+                                    {result.error && (
+                                        <span className="result-error" title={result.error}>再測定に失敗</span>
+                                    )}
                                 </>
                                 : <span className="result-none">未測定</span>
                         }
@@ -413,7 +513,7 @@ export const SignalView: React.FC = () => {
                             small
                             icon="satellite"
                             text={result ? "再測定" : "確認"}
-                            disabled={configuredTuners.length === 0 || activeKey !== null}
+                            disabled={configuredTuners.length === 0 || busy}
                             onClick={() => start(ch)}
                             fill
                         />
@@ -490,6 +590,23 @@ export const SignalView: React.FC = () => {
                         <section className="type-group" key={type}>
                             <h4 className="group-head">
                                 {type}<span className="group-count">{list.length}</span>
+                                <span className="group-actions">
+                                    {batch?.type === type && (
+                                        <span className="group-progress">
+                                            {batch.done} / {batch.total} 測定済み
+                                        </span>
+                                    )}
+                                    {batch?.type === type && batch.done < batch.total
+                                        ? <Button small intent="danger" icon="stop" text="中止" onClick={stop} />
+                                        : <Button
+                                            small
+                                            icon="play"
+                                            text={`${list.length} 局を ${BATCH_SAMPLES} 回ずつ測定`}
+                                            disabled={configuredTuners.length === 0 || busy}
+                                            onClick={() => startGroup(type, list)}
+                                        />
+                                    }
+                                </span>
                             </h4>
                             <div className="card-grid">{list.map(renderCard)}</div>
                         </section>
