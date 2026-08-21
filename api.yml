@@ -700,6 +700,19 @@ definitions:
         type: boolean
       remoteMirakurunAllowNested:
         type: boolean
+      remoteMirakurunTLS:
+        type: boolean
+        description: connect to the remote Mirakurun over HTTPS. changes the default port to 443.
+      remoteMirakurunCfAccessClientId:
+        type: string
+        description: >-
+          Cloudflare Access service token Client ID, sent as the CF-Access-Client-Id header.
+          supports ${ENV_VAR} to read the value from the environment.
+      remoteMirakurunCfAccessClientSecret:
+        type: string
+        description: >-
+          Cloudflare Access service token Client Secret, sent as the CF-Access-Client-Secret header.
+          supports ${ENV_VAR}; prefer that over storing the secret in the config file.
       decoder:
         type: string
       mmtsDecoder:

@@ -121,6 +121,34 @@
 
 `BS` / `CS` と `BS4K` を同じチューナーで扱う場合、`commandBS4K` を指定すると `BS4K` チャンネルだけ別コマンドで起動できます。省略時は `command` が使われます。`BS4K` コマンドの出力に MMTS 変換が必要な場合は `mmtsDecoder` を指定します。
 
+#### remoteMirakurunTLS / Cloudflare Zero Trust
+
+`remoteMirakurunTLS: true` を指定すると、リモート Mirakurun へ HTTP ではなく HTTPS で接続します。TLS プロキシ経由で公開されている場合に必要で、既定ポートが `40772` から `443` に変わります。
+
+リモートが [Cloudflare Zero Trust](https://developers.cloudflare.com/cloudflare-one/) の背後にある場合は、Access の[サービストークン](https://developers.cloudflare.com/cloudflare-one/identity/service-tokens/)で認証します。Mirakurun は `CF-Access-Client-Id` と `CF-Access-Client-Secret` ヘッダーを、そのリモートへの全リクエスト (ストリーム・サービススキャン・番組同期、および最初に取得する OpenAPI ドキュメント) に付与します。
+
+```yaml
+- name: RemoteTuner
+  types:
+    - GR
+  remoteMirakurunHost: tuner.example.com
+  remoteMirakurunTLS: true
+  remoteMirakurunCfAccessClientId: ${CF_ACCESS_CLIENT_ID}
+  remoteMirakurunCfAccessClientSecret: ${CF_ACCESS_CLIENT_SECRET}
+```
+
+ID とシークレットは必ず両方設定してください。また両方とも `remoteMirakurunTLS: true` を必要とします (Access は HTTPS のみを保護するため、平文 HTTP ではトークンが到達しません)。設定が不完全な場合、Mirakurun は認証なしで通信せず、そのチューナーの読み込みを拒否します。
+
+**シークレットはこのファイルに書かないでください。** `${VAR}` 形式の値は起動時に環境変数から読み込まれます。`GET /api/config/tuners` はチューナー設定をそのまま返すため、直接書いた場合は API にアクセスできる全員がシークレットを読み取れてしまいます。
+
+```sh
+CF_ACCESS_CLIENT_ID=1a2b3c....access CF_ACCESS_CLIENT_SECRET=... mirakurun start
+```
+
+値全体が `${VAR}` の場合のみ参照として扱われ、それ以外はそのままの文字列として使用されます。環境変数が未設定の場合は、変数名を示すエラーを記録し、`${VAR}` という文字列を送信するのではなく認証情報なしとして扱います。
+
+認証情報がコマンドラインに渡されることはありません。`lib/remote` 子プロセスへは環境変数で渡します。起動コマンドは `GET /api/tuners` で公開され、同一ホストの他プロセスからも参照できるためです。
+
 #### commandSignal
 
 チャンネルの信号レベルを測定するコマンドを指定します。**既定値はありません。** お使いのチューナープログラムに合わせて入力してください。いずれかのチューナーに設定するまで、Web UI の信号レベルページ (および `GET /api/channels/{type}/{channel}/signal`) は使用できません。

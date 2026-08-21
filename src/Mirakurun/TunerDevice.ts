@@ -26,6 +26,7 @@ import status from "./status";
 import Event from "./Event";
 import ChannelItem from "./ChannelItem";
 import { buildSignalCommand, runSignalCommand, SignalCheckOptions } from "./SignalChecker";
+import { getRemoteChildEnv, getRemoteConnection, getRemotePort, describeRemoteConnection } from "./remoteClient";
 import TSFilter from "./TSFilter";
 import TLVFilter from "./TLVFilter";
 import Client, { ProgramsQuery } from "../client";
@@ -514,9 +515,19 @@ export default class TunerDevice extends EventEmitter {
             throw new Error(util.format("TunerDevice#%d is not remote device", this._index));
         }
 
+        const connection = getRemoteConnection(this.config);
+        for (const name of connection.missingEnv) {
+            log.error(
+                "TunerDevice#%d remote credential references environment variable `%s`, which is not set",
+                this._index, name
+            );
+        }
+
         const client = new Client();
-        client.host = this.config.remoteMirakurunHost;
-        client.port = this.config.remoteMirakurunPort || 40772;
+        client.host = connection.host;
+        client.port = connection.port;
+        client.tls = connection.tls;
+        client.headers = connection.headers;
         client.userAgent = "Mirakurun (Remote)";
 
         log.debug("TunerDevice#%d fetching remote programs from %s:%d...", this._index, client.host, client.port);
@@ -540,7 +551,7 @@ export default class TunerDevice extends EventEmitter {
         if (this._isRemote === true) {
             cmd = "node lib/remote";
             cmd += " " + this._config.remoteMirakurunHost;
-            cmd += " " + (this._config.remoteMirakurunPort || 40772);
+            cmd += " " + getRemotePort(this._config);
             cmd += " " + common.getTuningChannelType(ch.type);
             cmd += " " + ch.channel;
             if (this._config.remoteMirakurunDecoder === true) {
@@ -564,7 +575,24 @@ export default class TunerDevice extends EventEmitter {
 
         const parsed = common.parseCommandForSpawn(cmd);
 
-        this._process = child_process.spawn(parsed.command, parsed.args);
+        const spawnOptions: child_process.SpawnOptions = {};
+        if (this._isRemote === true) {
+            const connection = getRemoteConnection(this._config);
+            for (const name of connection.missingEnv) {
+                log.error(
+                    "TunerDevice#%d remote credential references environment variable `%s`, which is not set",
+                    this._index, name
+                );
+            }
+            const childEnv = getRemoteChildEnv(this._config);
+            if (Object.keys(childEnv).length > 0) {
+                // never on the command line: it is published by GET /api/tuners
+                spawnOptions.env = { ...process.env, ...childEnv };
+            }
+            log.debug("TunerDevice#%d remote target is %s", this._index, describeRemoteConnection(connection));
+        }
+
+        this._process = child_process.spawn(parsed.command, parsed.args, spawnOptions);
         this._command = cmd;
         this._channel = ch;
         this._streamUsesMMTSDecoder = false;

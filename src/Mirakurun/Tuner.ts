@@ -26,6 +26,7 @@ import TLVFilter from "./TLVFilter";
 import TSDecoder from "./TSDecoder";
 import { TSHandoffOptions } from "./TSHandoff";
 import { SignalCheckOptions } from "./SignalChecker";
+import { getRemoteConnection, getRemotePort, describeRemoteConnection } from "./remoteClient";
 
 export type SignalCheckErrorCode = "no-tuner" | "not-configured" | "busy";
 
@@ -171,13 +172,16 @@ export class Tuner {
             port: number;
             tunerNames: string[];
             allowNested: boolean;
+            config: apid.ConfigTunersItem;
         }>();
 
         for (const device of devices) {
             const host = device.config.remoteMirakurunHost;
-            const port = device.config.remoteMirakurunPort || 40772;
+            const port = getRemotePort(device.config);
             const allowNested = device.config.remoteMirakurunAllowNested === true;
-            const key = JSON.stringify([host, port, allowNested]);
+            // tuners differing only in credentials must not share a source entry
+            const connection = getRemoteConnection(device.config);
+            const key = JSON.stringify([host, port, allowNested, connection.tls, connection.headers]);
             const source = remoteSources.get(key);
             if (source) {
                 source.tunerNames.push(device.config.name);
@@ -186,7 +190,8 @@ export class Tuner {
                     host,
                     port,
                     tunerNames: [device.config.name],
-                    allowNested
+                    allowNested,
+                    config: device.config
                 });
             }
         }
@@ -194,8 +199,11 @@ export class Tuner {
         const results = await Promise.allSettled([...remoteSources.values()].map(async source => {
             const Client = require("../client").default;
             const client = new Client();
-            client.host = source.host;
-            client.port = source.port;
+            const connection = getRemoteConnection(source.config);
+            client.host = connection.host;
+            client.port = connection.port;
+            client.tls = connection.tls;
+            client.headers = connection.headers;
             client.userAgent = "Mirakurun (Remote Service Sync)";
 
             const services = await client.getServices({
@@ -344,13 +352,20 @@ export class Tuner {
         const remoteDevice = this._getRemoteOnlyDevice(devices);
 
         if (remoteDevice !== null) {
-            log.info("Fetching services for channel %s from remote Mirakurun %s:%d via API",
-                channel.name, remoteDevice.config.remoteMirakurunHost, remoteDevice.config.remoteMirakurunPort || 40772);
+            const connection = getRemoteConnection(remoteDevice.config);
+            for (const name of connection.missingEnv) {
+                log.error("remote credential references environment variable `%s`, which is not set", name);
+            }
+
+            log.info("Fetching services for channel %s from remote Mirakurun %s via API",
+                channel.name, describeRemoteConnection(connection));
 
             const Client = require("../client").default;
             const client = new Client();
-            client.host = remoteDevice.config.remoteMirakurunHost;
-            client.port = remoteDevice.config.remoteMirakurunPort || 40772;
+            client.host = connection.host;
+            client.port = connection.port;
+            client.tls = connection.tls;
+            client.headers = connection.headers;
             client.userAgent = "Mirakurun (Remote Service Scanner)";
 
             try {
@@ -603,6 +618,41 @@ export class Tuner {
 
             if (tuner.remoteMirakurunAllowNested !== undefined && typeof tuner.remoteMirakurunAllowNested !== "boolean") {
                 log.error("invalid type of property `remoteMirakurunAllowNested` in tuner#%s configuration", i);
+                return;
+            }
+
+            if (tuner.remoteMirakurunTLS !== undefined && typeof tuner.remoteMirakurunTLS !== "boolean") {
+                log.error("invalid type of property `remoteMirakurunTLS` in tuner#%s configuration", i);
+                return;
+            }
+
+            if (tuner.remoteMirakurunCfAccessClientId !== undefined &&
+                typeof tuner.remoteMirakurunCfAccessClientId !== "string") {
+                log.error("invalid type of property `remoteMirakurunCfAccessClientId` in tuner#%s configuration", i);
+                return;
+            }
+
+            if (tuner.remoteMirakurunCfAccessClientSecret !== undefined &&
+                typeof tuner.remoteMirakurunCfAccessClientSecret !== "string") {
+                log.error("invalid type of property `remoteMirakurunCfAccessClientSecret` in tuner#%s configuration", i);
+                return;
+            }
+
+            // a half-configured service token authenticates nothing: fail loudly
+            // rather than silently sending an unauthenticated request
+            if (!!tuner.remoteMirakurunCfAccessClientId !== !!tuner.remoteMirakurunCfAccessClientSecret) {
+                log.error(
+                    "`remoteMirakurunCfAccessClientId` and `remoteMirakurunCfAccessClientSecret` " +
+                    "must be set together in tuner#%s configuration", i
+                );
+                return;
+            }
+
+            if (tuner.remoteMirakurunCfAccessClientId && tuner.remoteMirakurunTLS !== true) {
+                // Cloudflare Access only fronts HTTPS; over plain HTTP the token never reaches it
+                log.error(
+                    "`remoteMirakurunCfAccessClientId` requires `remoteMirakurunTLS: true` in tuner#%s configuration", i
+                );
                 return;
             }
 

@@ -339,6 +339,26 @@ export interface ConfigTunersItem {
     remoteMirakurunDecoder?: boolean;
     /** [remote] `true` to allow the upstream Mirakurun to select another remote tuner. Default: `false`. */
     remoteMirakurunAllowNested?: boolean;
+    /**
+     * [remote] `true` to connect over HTTPS. required when the upstream is published
+     * through a TLS proxy such as Cloudflare Zero Trust.
+     * changes the default port to 443.
+     */
+    remoteMirakurunTLS?: boolean;
+    /**
+     * [remote] Cloudflare Access service token Client ID, sent as the
+     * `CF-Access-Client-Id` header. requires `remoteMirakurunTLS`.
+     * supports `${ENV_VAR}` to read the value from the environment instead of
+     * storing it in the config file.
+     */
+    remoteMirakurunCfAccessClientId?: string;
+    /**
+     * [remote] Cloudflare Access service token Client Secret, sent as the
+     * `CF-Access-Client-Secret` header. requires `remoteMirakurunTLS`.
+     * supports `${ENV_VAR}`; prefer that, since this file is readable through
+     * `GET /api/config/tuners`.
+     */
+    remoteMirakurunCfAccessClientSecret?: string;
     /** CAS processor command if needed. */
     decoder?: string;
     /** MMTS processor command for BS4K if needed. */

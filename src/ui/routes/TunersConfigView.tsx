@@ -369,7 +369,7 @@ export const TunersConfigView: React.FC = () => {
                                                                 const val = e.target.value;
                                                                 if (val === "") {
                                                                     deleteTunerProperty(i, "remoteMirakurunHost");
-                                                                } else if (/^[0-9a-z\.]+$/.test(val)) {
+                                                                } else if (/^[0-9a-zA-Z.\-]+$/.test(val)) {
                                                                     updateTuner(i, { remoteMirakurunHost: val });
                                                                 }
                                                             }}
@@ -377,7 +377,7 @@ export const TunersConfigView: React.FC = () => {
                                                     </FormGroup>
                                                     <FormGroup label="Port" style={{ width: "90px" }}>
                                                         <InputGroup
-                                                            placeholder="40772"
+                                                            placeholder={tuner.remoteMirakurunTLS ? "443" : "40772"}
                                                             value={`${tuner.remoteMirakurunPort || ""}`}
                                                             onChange={(e) => {
                                                                 const val = e.target.value;
@@ -406,6 +406,17 @@ export const TunersConfigView: React.FC = () => {
                                                         }}
                                                     />
                                                     <Checkbox
+                                                        label="TLS (connect over HTTPS)"
+                                                        checked={tuner.remoteMirakurunTLS || false}
+                                                        onChange={(e) => {
+                                                            if (e.currentTarget.checked) {
+                                                                updateTuner(i, { remoteMirakurunTLS: true });
+                                                            } else {
+                                                                deleteTunerProperty(i, "remoteMirakurunTLS");
+                                                            }
+                                                        }}
+                                                    />
+                                                    <Checkbox
                                                         label="Allow Nested Remote Tuner"
                                                         checked={tuner.remoteMirakurunAllowNested || false}
                                                         onChange={(e) => {
@@ -417,6 +428,45 @@ export const TunersConfigView: React.FC = () => {
                                                         }}
                                                     />
                                                 </div>
+                                                {tuner.remoteMirakurunTLS && (
+                                                    <>
+                                                        <FormGroup
+                                                            label="Cloudflare Access Client ID"
+                                                            helperText="For an upstream published through Cloudflare Zero Trust. Supports ${ENV_VAR}."
+                                                        >
+                                                            <InputGroup
+                                                                placeholder="(not set)"
+                                                                value={tuner.remoteMirakurunCfAccessClientId || ""}
+                                                                onChange={(e) => {
+                                                                    const val = e.target.value;
+                                                                    if (val === "") {
+                                                                        deleteTunerProperty(i, "remoteMirakurunCfAccessClientId");
+                                                                    } else {
+                                                                        updateTuner(i, { remoteMirakurunCfAccessClientId: val });
+                                                                    }
+                                                                }}
+                                                            />
+                                                        </FormGroup>
+                                                        <FormGroup
+                                                            label="Cloudflare Access Client Secret"
+                                                            helperText="Readable via GET /api/config/tuners once saved — prefer ${ENV_VAR} to keep it out of the config file."
+                                                        >
+                                                            <InputGroup
+                                                                type="password"
+                                                                placeholder="(not set)"
+                                                                value={tuner.remoteMirakurunCfAccessClientSecret || ""}
+                                                                onChange={(e) => {
+                                                                    const val = e.target.value;
+                                                                    if (val === "") {
+                                                                        deleteTunerProperty(i, "remoteMirakurunCfAccessClientSecret");
+                                                                    } else {
+                                                                        updateTuner(i, { remoteMirakurunCfAccessClientSecret: val });
+                                                                    }
+                                                                }}
+                                                            />
+                                                        </FormGroup>
+                                                    </>
+                                                )}
                                             </>
                                         )}
                                         {(!tuner.remoteMirakurunHost || !tuner.remoteMirakurunDecoder) && (

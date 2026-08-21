@@ -109,6 +109,11 @@
   remoteMirakurunDecoder: false # Boolean
   # Allow the upstream Mirakurun to select another remote tuner. Default: false.
   remoteMirakurunAllowNested: false # Boolean
+  # Connect over HTTPS. Required behind a TLS proxy. Changes the default port to 443.
+  remoteMirakurunTLS: false # Boolean
+  # Cloudflare Access service token. Both are required together, and require remoteMirakurunTLS.
+  remoteMirakurunCfAccessClientId: ${CF_ACCESS_CLIENT_ID} # String
+  remoteMirakurunCfAccessClientSecret: ${CF_ACCESS_CLIENT_SECRET} # String
   # Optional parameters below
   decoder: cmd # String
   mmtsDecoder: cmd # String
@@ -122,6 +127,34 @@ Specify the CAS processing command as needed.
 #### commandBS4K / mmtsDecoder
 
 When a tuner supports `BS4K` together with `BS` / `CS`, specify `commandBS4K` to use a dedicated command for `BS4K` channels. If `commandBS4K` is omitted, `command` is used. Specify `mmtsDecoder` when the `BS4K` command output needs MMTS conversion.
+
+#### remoteMirakurunTLS / Cloudflare Zero Trust
+
+Set `remoteMirakurunTLS: true` to reach the upstream Mirakurun over HTTPS instead of plain HTTP. This is required whenever the upstream is published through a TLS proxy, and it changes the default port from `40772` to `443`.
+
+When the upstream sits behind [Cloudflare Zero Trust](https://developers.cloudflare.com/cloudflare-one/), authenticate with an Access [service token](https://developers.cloudflare.com/cloudflare-one/identity/service-tokens/). Mirakurun sends it as the `CF-Access-Client-Id` and `CF-Access-Client-Secret` headers on every request to that upstream — the stream, the service scan, the program sync, and the OpenAPI document each request fetches first:
+
+```yaml
+- name: RemoteTuner
+  types:
+    - GR
+  remoteMirakurunHost: tuner.example.com
+  remoteMirakurunTLS: true
+  remoteMirakurunCfAccessClientId: ${CF_ACCESS_CLIENT_ID}
+  remoteMirakurunCfAccessClientSecret: ${CF_ACCESS_CLIENT_SECRET}
+```
+
+Both halves must be set together, and both require `remoteMirakurunTLS: true`; Access only fronts HTTPS, so over plain HTTP the token would never reach it. Mirakurun refuses to load a tuner that gets this wrong rather than quietly making unauthenticated requests.
+
+**Keep the secret out of this file.** A value written as `${VAR}` is read from that environment variable at load time. This matters because `GET /api/config/tuners` returns the tuners configuration verbatim, so a literal secret here is readable by anyone who can reach the Mirakurun API. With the indirection, the file holds only the variable name:
+
+```sh
+CF_ACCESS_CLIENT_ID=1a2b3c....access CF_ACCESS_CLIENT_SECRET=... mirakurun start
+```
+
+Only a whole value of the form `${VAR}` is treated as a reference; anything else is used literally. If the variable is unset, Mirakurun logs an error naming it and sends no credentials, rather than transmitting the literal string `${VAR}`.
+
+Credentials are never passed on a command line. The `lib/remote` child process receives them in its environment, because the spawned command is published by `GET /api/tuners` and is visible to other local processes.
 
 #### commandSignal
 
