@@ -95,6 +95,8 @@
   command: cmd <channel> --arg1 --arg2 <exampleArg1> <exampleArg2>... # String
   # Optional command used only for BS4K. Falls back to `command` when omitted.
   commandBS4K: cmd-bs4k <channel> --arg1 --arg2 <exampleArg1> <exampleArg2>... # String
+  # Optional command used by the signal check page (Web UI: 信号レベル). No default.
+  commandSignal: cmd checksignal <channel> # String
   # For dvb
   dvbDevicePath: /dev/dvb/adapter/dvr/path # String
   # Optional preflight path. If omitted, dvbDevicePath is checked when set.
@@ -120,6 +122,35 @@ Specify the CAS processing command as needed.
 #### commandBS4K / mmtsDecoder
 
 When a tuner supports `BS4K` together with `BS` / `CS`, specify `commandBS4K` to use a dedicated command for `BS4K` channels. If `commandBS4K` is omitted, `command` is used. Specify `mmtsDecoder` when the `BS4K` command output needs MMTS conversion.
+
+#### commandSignal
+
+Specify the command used to measure the signal level of a channel. There is **no default**: supply the command for whichever tuner program you use. The signal check page in the Web UI (and `GET /api/channels/{type}/{channel}/signal`) is unavailable until at least one tuner has this set.
+
+Mirakurun reads the readings from the command's standard output *or* standard error, recognising values by their unit, so the usual tools work without a wrapper:
+
+- `dB`  -> **C/N**, the carrier-to-noise ratio (signal quality)
+- `dBm` -> **SIG**, the signal strength (RF power at the tuner input)
+
+```yaml
+  # recisdb (https://github.com/kazuki0824/recisdb-rs) -- prints "12.34dB" to stdout
+  commandSignal: recisdb checksignal --device /dev/px4video0 --channel <channel>
+
+  # recpt1 (https://github.com/stz2012/recpt1) -- prints "C/N = 30.500000dB" to stderr
+  commandSignal: checksignal --device /dev/pt1video0 <channel>
+
+  # dvbv5-zap -- prints both units on one line to stderr:
+  #   Lock   (0x1f) Quality= Good Signal= -21.05dBm C/N= 22.50dB UCB= 0 postBER= 0
+  commandSignal: dvbv5-zap -a 0 -c /path/to/dvbv5_channels_isdbt.conf -m -t 0 <channel>
+```
+
+Whatever the command reports is what the page shows; a command reporting only one of the two leaves the other blank rather than guessing.
+
+C/N is graded (`>= 30` good, `>= 15` fair, below that poor -- the same bands recpt1 uses). **SIG is shown without a verdict on purpose:** a workable input level depends on the tuner's AGC range, and too strong is a real failure mode that an attenuator fixes, so no fixed dBm band would be meaningful across devices. Use it to compare readings on your own hardware -- for example while fitting an attenuator -- and watch what C/N does in response.
+
+Tuners whose driver reports relative rather than absolute stats print percentages (`Signal= 65.00%`) instead of dB/dBm. Those readings are not recognised; nothing is shown rather than a wrong number.
+
+The same template variables as `command` are substituted (`<channel>`, `<type>`, and any `commandVars`). Both commands above run until stopped; Mirakurun terminates the process when the measurement ends or the client disconnects. The tuner is reserved for the duration, so a signal check never runs on a tuner that is streaming.
 
 #### checkDevicePath
 

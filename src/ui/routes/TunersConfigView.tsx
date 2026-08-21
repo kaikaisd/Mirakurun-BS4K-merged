@@ -311,6 +311,23 @@ export const TunersConfigView: React.FC = () => {
                                                         />
                                                     </FormGroup>
                                                 )}
+                                                <FormGroup
+                                                    label="Signal Command"
+                                                    helperText="Optional. Command used by the signal check page, e.g. `recisdb checksignal --device /dev/px4video0 --channel <channel>`, `checksignal --device /dev/pt1video0 <channel>`, or `dvbv5-zap -a 0 -c CONF -m -t 0 <channel>`. Values are read by unit: `dB` as C/N, `dBm` as signal strength."
+                                                >
+                                                    <InputGroup
+                                                        placeholder="(not set)"
+                                                        value={tuner.commandSignal || ""}
+                                                        onChange={(e) => {
+                                                            const val = e.target.value;
+                                                            if (val === "") {
+                                                                deleteTunerProperty(i, "commandSignal");
+                                                            } else {
+                                                                updateTuner(i, { commandSignal: val });
+                                                            }
+                                                        }}
+                                                    />
+                                                </FormGroup>
                                                 <FormGroup label="DVB Device Path">
                                                     <InputGroup
                                                         value={tuner.dvbDevicePath || ""}

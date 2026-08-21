@@ -147,6 +147,8 @@ export const Nav: React.FC<NavProps> = ({ pathLv1 }) => {
                                 : <MenuItem icon="moon" text="ダークテーマ" onClick={() => { setDark(true); }} />
                             }
                             <MenuDivider />
+                            <MenuItem onClick={() => { state.navigate("/signal"); }} icon="satellite" text="信号レベル" />
+                            <MenuDivider />
                             <MenuItem onClick={() => { state.navigate("/config/server"); }} icon="wrench" text="サーバー設定" />
                             <MenuItem onClick={() => { state.navigate("/config/tuners"); }} icon="wrench" text="チューナー設定" />
                             <MenuItem onClick={() => { state.navigate("/config/channels"); }} icon="wrench" text="チャンネル設定" />

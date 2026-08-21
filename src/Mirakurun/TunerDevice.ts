@@ -25,6 +25,7 @@ import * as apid from "../../api";
 import status from "./status";
 import Event from "./Event";
 import ChannelItem from "./ChannelItem";
+import { buildSignalCommand, runSignalCommand, SignalCheckOptions } from "./SignalChecker";
 import TSFilter from "./TSFilter";
 import TLVFilter from "./TLVFilter";
 import Client, { ProgramsQuery } from "../client";
@@ -82,6 +83,7 @@ export default class TunerDevice extends EventEmitter {
     private _lastCooldownLogUntil = 0;
     private _lastDataAt = 0;
     private _commandFailed = false;
+    private _checkingSignal = false;
 
     constructor(private _index: number, private _config: apid.ConfigTunersItem) {
         super();
@@ -149,7 +151,16 @@ export default class TunerDevice extends EventEmitter {
     }
 
     get isFree(): boolean {
-        return this._isAvailable === true && this._channel === null && this._users.size === 0;
+        return this._isAvailable === true && this._checkingSignal === false &&
+            this._channel === null && this._users.size === 0;
+    }
+
+    get isCheckingSignal(): boolean {
+        return this._checkingSignal;
+    }
+
+    get signalCommand(): string | null {
+        return this._config.commandSignal || null;
     }
 
     get isUsing(): boolean {
@@ -209,6 +220,9 @@ export default class TunerDevice extends EventEmitter {
         if (ignoreAvailability === false && this._isAvailable === false) {
             return false;
         }
+        if (this._checkingSignal === true) {
+            return false;
+        }
         if (channel && this._config.types.includes(channel.type) === false) {
             return false;
         }
@@ -240,6 +254,56 @@ export default class TunerDevice extends EventEmitter {
             isUsing: this.isUsing,
             isFault: this.isFault
         };
+    }
+
+    canCheckSignal(channel: ChannelItem): boolean {
+        if (this.signalCommand === null) {
+            return false;
+        }
+        if (this._isRemote === true) {
+            return false;
+        }
+
+        return this.isFree === true && this.canStartStream(channel);
+    }
+
+    /**
+     * Run the configured signal check command against a channel.
+     *
+     * The device is leased for the whole check so the tuner manager will not
+     * hand it to a stream midway: the command drives the hardware directly and
+     * cannot share it.
+     */
+    async checkSignal(channel: ChannelItem, options: SignalCheckOptions): Promise<string> {
+        if (this.signalCommand === null) {
+            throw new Error(util.format("TunerDevice#%d has no `commandSignal` configured", this._index));
+        }
+        if (this._checkingSignal === true) {
+            throw new Error(util.format("TunerDevice#%d is already checking signal", this._index));
+        }
+        if (this.isFree === false) {
+            throw new Error(util.format("TunerDevice#%d is not free", this._index));
+        }
+
+        const command = buildSignalCommand(this.signalCommand, channel);
+
+        this._checkingSignal = true;
+        this._command = command;
+        log.info(
+            "TunerDevice#%d checking signal for channel `%s` (%s) using `%s`",
+            this._index, channel.channel, channel.type, command
+        );
+        Event.emit("tuner", "update", this.toJSON());
+
+        try {
+            await runSignalCommand(command, options);
+            return command;
+        } finally {
+            this._checkingSignal = false;
+            this._command = null;
+            log.info("TunerDevice#%d finished checking signal", this._index);
+            Event.emit("tuner", "update", this.toJSON());
+        }
     }
 
     async kill(): Promise<void> {

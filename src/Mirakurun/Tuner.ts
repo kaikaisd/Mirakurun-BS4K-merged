@@ -25,6 +25,22 @@ import TSFilter from "./TSFilter";
 import TLVFilter from "./TLVFilter";
 import TSDecoder from "./TSDecoder";
 import { TSHandoffOptions } from "./TSHandoff";
+import { SignalCheckOptions } from "./SignalChecker";
+
+export type SignalCheckErrorCode = "no-tuner" | "not-configured" | "busy";
+
+export class TunerSignalError extends Error {
+    constructor(message: string, readonly code: SignalCheckErrorCode) {
+        super(message);
+        this.name = "TunerSignalError";
+    }
+}
+
+export interface SignalCheckResult {
+    readonly tunerIndex: number;
+    readonly tunerName: string;
+    readonly command: string;
+}
 
 export interface RemoteServiceSource {
     tunerNames: string[];
@@ -486,6 +502,35 @@ export class Tuner {
                 }
             });
         });
+    }
+
+    /**
+     * Run a signal check for a channel on a free tuner that has `commandSignal`
+     * configured, honouring the channel's `allowedTuners`.
+     */
+    async checkSignal(channel: ChannelItem, options: SignalCheckOptions): Promise<SignalCheckResult> {
+        const devices = this._getDevicesByChannel(channel);
+
+        if (devices.length === 0) {
+            throw new TunerSignalError(`no tuner is configured for channel type \`${channel.type}\``, "no-tuner");
+        }
+
+        const configured = devices.filter(device => device.signalCommand !== null && device.isRemote === false);
+        if (configured.length === 0) {
+            throw new TunerSignalError(
+                "no tuner for this channel has a signal check command (`commandSignal`) configured",
+                "not-configured"
+            );
+        }
+
+        const device = configured.find(device => device.canCheckSignal(channel));
+        if (!device) {
+            throw new TunerSignalError("all tuners for this channel are busy", "busy");
+        }
+
+        const command = await device.checkSignal(channel, options);
+
+        return { tunerIndex: device.index, tunerName: device.config.name, command };
     }
 
     private _load(): this {
