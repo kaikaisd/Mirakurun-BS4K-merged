@@ -15,109 +15,190 @@
     code
       font-size: 12px
 
-  .reading
-    .reading-head
+  .toolbar
+    display: flex
+    align-items: center
+    flex-wrap: wrap
+    gap: 12px
+    position: sticky
+    top: 0
+    z-index: 2
+    padding: 8px 0
+    background: inherit
+
+    .bp5-input-group
+      min-width: 240px
+      flex: 1 1 240px
+      max-width: 380px
+
+    .bp5-switch
+      margin: 0
+
+    .count
+      margin-left: auto
+      white-space: nowrap
+      opacity: 0.7
+
+  .type-group
+    display: flex
+    flex-direction: column
+    gap: 8px
+
+    .group-head
       display: flex
       align-items: center
       gap: 8px
-      margin-bottom: 8px
+      margin: 0
+      font-size: 13px
+      letter-spacing: 0.06em
+      text-transform: uppercase
+      opacity: 0.65
 
-      .reading-channel
+      .group-count
+        font-size: 11px
+        padding: 1px 6px
+        border-radius: 10px
+        background: rgba(138, 155, 168, 0.2)
+        letter-spacing: 0
+
+  .card-grid
+    display: grid
+    // a fixed minimum keeps cards readable while the grid absorbs any channel count
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr))
+    gap: 12px
+
+  .signal-card
+    display: flex
+    flex-direction: column
+    gap: 8px
+    padding: 12px
+    border-radius: 6px
+    background: rgba(138, 155, 168, 0.1)
+    border: 1px solid transparent
+
+    &.active
+      border-color: rgba(45, 114, 210, 0.7)
+      background: rgba(45, 114, 210, 0.12)
+      // the running card carries the live reading, so give it room
+      grid-column: span 2
+
+      @media (max-width: 620px)
+        grid-column: span 1
+
+    &.errored
+      border-color: rgba(205, 66, 70, 0.4)
+
+    .card-head
+      display: flex
+      align-items: center
+      gap: 6px
+
+      .channel
         font-weight: 600
+        font-variant-numeric: tabular-nums
 
-      .bp5-button
+      .tuner
         margin-left: auto
+        max-width: 45%
+        overflow: hidden
+        text-overflow: ellipsis
+        white-space: nowrap
 
-    .reading-waiting
+    .card-name
+      font-size: 13px
+      opacity: 0.85
+      overflow: hidden
+      text-overflow: ellipsis
+      white-space: nowrap
+
+    .card-result
       display: flex
+      flex-wrap: wrap
+      gap: 4px 12px
+      min-height: 24px
       align-items: center
-      gap: 8px
-      opacity: 0.8
+      font-variant-numeric: tabular-nums
+
+      .result-metric
+        display: inline-flex
+        align-items: baseline
+        gap: 4px
+
+        b
+          font-size: 16px
+
+      .result-none
+        font-size: 12px
+        opacity: 0.5
+
+      .result-error
+        font-size: 12px
+        color: colors.$red4
+        overflow: hidden
+        text-overflow: ellipsis
+        white-space: nowrap
+
+    .card-live
+      display: flex
+      flex-direction: column
+      gap: 4px
+
+      .waiting
+        display: flex
+        align-items: center
+        gap: 8px
+        font-size: 12px
+        opacity: 0.8
+
+      .reading-level
+        display: flex
+        align-items: baseline
+        gap: 8px
+        font-size: 30px
+        font-weight: 600
+        font-variant-numeric: tabular-nums
+        line-height: 1.15
+
+        .bp5-tag
+          align-self: center
+          font-size: 11px
+
+      .reading-strength
+        display: flex
+        align-items: baseline
+        gap: 8px
+        font-size: 18px
+        font-weight: 600
+        font-variant-numeric: tabular-nums
+        opacity: 0.9
+
+      .card-stats
+        display: flex
+        flex-wrap: wrap
+        gap: 2px 12px
+        font-size: 11px
+        font-variant-numeric: tabular-nums
+        opacity: 0.8
 
     .metric-name
-      font-size: 13px
+      font-size: 11px
       font-weight: 600
       letter-spacing: 0.06em
       opacity: 0.6
-      min-width: 34px
 
-    .reading-strength
-      display: flex
-      align-items: baseline
-      gap: 10px
-      font-size: 22px
-      font-weight: 600
-      font-variant-numeric: tabular-nums
-      opacity: 0.9
-
-      .unit
-        font-size: 13px
-        font-weight: 400
-        margin-left: 2px
-        opacity: 0.7
-
-    .reading-level
-      display: flex
-      align-items: baseline
-      gap: 10px
-      font-size: 40px
-      font-weight: 600
-      font-variant-numeric: tabular-nums
-      line-height: 1.1
-
-      .unit
-        font-size: 18px
-        font-weight: 400
-        margin-left: 2px
-        opacity: 0.7
-
-      .bp5-tag
-        align-self: center
-        font-size: 12px
+    .unit
+      font-size: 12px
+      font-weight: 400
+      opacity: 0.7
 
     .sparkline
       display: block
       width: 100%
-      height: 40px
-      margin: 8px 0
+      height: 32px
 
       polyline
         stroke: currentColor
         opacity: 0.75
 
-    .reading-stats
-      display: flex
-      flex-wrap: wrap
-      gap: 6px 16px
-      font-variant-numeric: tabular-nums
-      opacity: 0.85
-
-  .toolbar
-    display: flex
-    align-items: center
-    gap: 12px
-
-    .count
-      opacity: 0.7
-
-  .signal-table
-    width: 100%
-
-    td, th
-      vertical-align: middle !important
-
-    th
-      white-space: nowrap
-
-    .channel
-      font-variant-numeric: tabular-nums
-
-    .name
-      width: 100%
-
-    .action
-      text-align: right
-      white-space: nowrap
-
-    tr.active
-      font-weight: 600
+    .card-actions
+      margin-top: auto

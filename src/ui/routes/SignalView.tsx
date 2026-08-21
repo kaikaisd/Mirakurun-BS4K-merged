@@ -14,14 +14,15 @@
    limitations under the License.
 */
 import * as React from "react";
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import {
     Button,
     Callout,
     HTMLSelect,
-    HTMLTable,
+    InputGroup,
     NonIdealState,
     Spinner,
+    Switch,
     Tag
 } from "@blueprintjs/core";
 import { ConfigChannels, ConfigChannelsItem, ConfigTuners, ChannelType } from "../../../api.d";
@@ -63,6 +64,31 @@ function levelLabel(level: number): string {
 
 type Sample = { time: number; level: number | null; strength: number | null };
 
+/** What a finished check leaves behind, so a survey of many channels accumulates. */
+type Result = {
+    cn: Stat | null;
+    sig: Stat | null;
+    count: number;
+    at: number;
+    error?: string;
+};
+
+type Stat = { min: number; max: number; avg: number; last: number };
+
+function stat(values: number[]): Stat | null {
+    if (values.length === 0) {
+        return null;
+    }
+    return {
+        min: Math.min(...values),
+        max: Math.max(...values),
+        avg: values.reduce((a, b) => a + b, 0) / values.length,
+        last: values[values.length - 1]
+    };
+}
+
+const channelKey = (ch: ConfigChannelsItem) => `${ch.type}/${ch.channel}`;
+
 /**
  * C/N and signal strength are plotted on their own scales: dB readings sit
  * around 0..35, dBm readings are negative, so one shared axis would flatten
@@ -92,17 +118,6 @@ const Sparkline: React.FC<{ values: number[]; floor?: number; ceil?: number }> =
     );
 };
 
-function stat(values: number[]) {
-    if (values.length === 0) {
-        return null;
-    }
-    return {
-        min: Math.min(...values),
-        max: Math.max(...values),
-        avg: values.reduce((a, b) => a + b, 0) / values.length
-    };
-}
-
 export const SignalView: React.FC = () => {
     console.debug("SignalView");
 
@@ -111,13 +126,18 @@ export const SignalView: React.FC = () => {
     const [loadError, setLoadError] = useState<string>(null);
 
     const [typeFilter, setTypeFilter] = useState<string>("");
+    const [query, setQuery] = useState<string>("");
+    const [measuredOnly, setMeasuredOnly] = useState<boolean>(false);
+
     const [activeKey, setActiveKey] = useState<string>(null);
     const [samples, setSamples] = useState<Sample[]>([]);
     const [checkError, setCheckError] = useState<string>(null);
     const [tunerName, setTunerName] = useState<string>(null);
     const [connecting, setConnecting] = useState<boolean>(false);
+    const [results, setResults] = useState<{ [key: string]: Result }>({});
 
     const abortRef = useRef<AbortController>(null);
+    const cardRefs = useRef<{ [key: string]: HTMLDivElement }>({});
 
     useEffect(() => {
         document.title = "信号レベル - Mirakurun";
@@ -151,7 +171,7 @@ export const SignalView: React.FC = () => {
     const start = useCallback((channel: ConfigChannelsItem) => {
         abortRef.current?.abort();
 
-        const key = `${channel.type}/${channel.channel}`;
+        const key = channelKey(channel);
         const abort = new AbortController();
         abortRef.current = abort;
 
@@ -161,7 +181,13 @@ export const SignalView: React.FC = () => {
         setTunerName(null);
         setConnecting(true);
 
+        // keep the running card in view when it is picked from a long list
+        window.requestAnimationFrame(() => {
+            cardRefs.current[key]?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        });
+
         (async () => {
+            const collected: Sample[] = [];
             try {
                 const res = await fetch(
                     `/api/channels/${channel.type}/${encodeURIComponent(channel.channel)}/signal/stream?duration=600`,
@@ -179,6 +205,10 @@ export const SignalView: React.FC = () => {
                         // non-JSON error body; the status is all we have
                     }
                     setCheckError(reason);
+                    setResults(prev => ({
+                        ...prev,
+                        [key]: { cn: null, sig: null, count: 0, at: Date.now(), error: reason }
+                    }));
                     setConnecting(false);
                     setActiveKey(null);
                     return;
@@ -211,8 +241,14 @@ export const SignalView: React.FC = () => {
                             continue;
                         }
                         if (msg.type === "sample") {
-                            setSamples(prev => [...prev, { time: msg.time, level: msg.level ?? null, strength: msg.strength ?? null }].slice(-MAX_HISTORY));
-                        } else if (msg.type === "end") {
+                            const sample: Sample = {
+                                time: msg.time,
+                                level: msg.level ?? null,
+                                strength: msg.strength ?? null
+                            };
+                            collected.push(sample);
+                            setSamples(prev => [...prev, sample].slice(-MAX_HISTORY));
+                        } else if (msg.type === "start" || msg.type === "end") {
                             setTunerName(msg.tunerName);
                         } else if (msg.type === "error") {
                             setCheckError(msg.message);
@@ -225,11 +261,56 @@ export const SignalView: React.FC = () => {
                 }
             } finally {
                 setConnecting(false);
-                // the stream ran to its duration; the tuner is released either way
+                if (collected.length > 0) {
+                    setResults(prev => ({
+                        ...prev,
+                        [key]: {
+                            cn: stat(collected.map(s => s.level).filter((v): v is number => v !== null)),
+                            sig: stat(collected.map(s => s.strength).filter((v): v is number => v !== null)),
+                            count: collected.length,
+                            at: Date.now()
+                        }
+                    }));
+                }
                 setActiveKey(prev => (prev === key ? null : prev));
             }
         })();
     }, []);
+
+    const enabled = useMemo(
+        () => (channels || []).filter(ch => ch.isDisabled !== true),
+        [channels]
+    );
+
+    const groups = useMemo(() => {
+        const q = query.trim().toLowerCase();
+        const matched = enabled.filter(ch => {
+            if (typeFilter && ch.type !== typeFilter) {
+                return false;
+            }
+            if (measuredOnly && !results[channelKey(ch)]) {
+                return false;
+            }
+            if (q === "") {
+                return true;
+            }
+            return ch.channel.toLowerCase().includes(q) || (ch.name || "").toLowerCase().includes(q);
+        });
+
+        const byType = new Map<ChannelType, ConfigChannelsItem[]>();
+        for (const ch of matched) {
+            const list = byType.get(ch.type);
+            if (list) {
+                list.push(ch);
+            } else {
+                byType.set(ch.type, [ch]);
+            }
+        }
+
+        return typesIndex
+            .filter(t => byType.has(t))
+            .map(t => [t, byType.get(t)] as [ChannelType, ConfigChannelsItem[]]);
+    }, [enabled, typeFilter, query, measuredOnly, results]);
 
     if (loadError) {
         return <div id="route-signal-view">
@@ -242,19 +323,105 @@ export const SignalView: React.FC = () => {
     }
 
     const configuredTuners = tuners.filter(t => !!t.commandSignal && t.isDisabled !== true);
-    const enabled = channels.filter(ch => ch.isDisabled !== true);
     const types = typesIndex.filter(t => enabled.some(ch => ch.type === t));
-    const visible = typeFilter ? enabled.filter(ch => ch.type === typeFilter) : enabled;
+    const shown = groups.reduce((n, [, list]) => n + list.length, 0);
 
     const latest = samples.length ? samples[samples.length - 1] : null;
     const cnValues = samples.map(s => s.level).filter((v): v is number => v !== null);
     const sigValues = samples.map(s => s.strength).filter((v): v is number => v !== null);
-    const cn = stat(cnValues);
-    const sig = stat(sigValues);
-    // C/N is the quality metric, so it leads when the command reports it;
-    // a strength-only command (some dvbv5-zap setups) still gets a readout
+    const liveCn = stat(cnValues);
+    const liveSig = stat(sigValues);
     const hasCN = latest?.level !== null && latest?.level !== undefined;
     const hasSIG = latest?.strength !== null && latest?.strength !== undefined;
+
+    const renderCard = (ch: ConfigChannelsItem) => {
+        const key = channelKey(ch);
+        const isActive = activeKey === key;
+        const result = results[key];
+
+        return (
+            <div
+                key={key}
+                ref={el => { cardRefs.current[key] = el; }}
+                className={`signal-card${isActive ? " active" : ""}${result?.error ? " errored" : ""}`}
+            >
+                <div className="card-head">
+                    <Tag minimal className="type">{ch.type}</Tag>
+                    <span className="channel">{ch.channel}</span>
+                    {isActive && tunerName && <Tag minimal intent="primary" className="tuner">{tunerName}</Tag>}
+                </div>
+                <div className="card-name" title={ch.name}>{ch.name}</div>
+
+                {isActive
+                    ? <div className="card-live">
+                        {connecting && <div className="waiting"><Spinner size={16} /> チューナーを起動しています...</div>}
+                        {hasCN && (
+                            <div className="reading-level">
+                                <span className="metric-name">C/N</span>
+                                {latest.level.toFixed(2)}<span className="unit">dB</span>
+                                <Tag intent={levelIntent(latest.level)}>{levelLabel(latest.level)}</Tag>
+                            </div>
+                        )}
+                        {hasSIG && (
+                            <div className={hasCN ? "reading-strength" : "reading-level"}>
+                                <span className="metric-name">SIG</span>
+                                {latest.strength.toFixed(2)}<span className="unit">dBm</span>
+                            </div>
+                        )}
+                        {latest && <>
+                            <Sparkline
+                                values={hasCN ? cnValues : sigValues}
+                                floor={hasCN ? 0 : undefined}
+                                ceil={hasCN ? 35 : undefined}
+                            />
+                            <div className="card-stats">
+                                {liveCn && <span>C/N {liveCn.min.toFixed(2)} 〜 {liveCn.max.toFixed(2)} 平均 {liveCn.avg.toFixed(2)}dB</span>}
+                                {liveSig && <span>SIG {liveSig.min.toFixed(2)} 〜 {liveSig.max.toFixed(2)} 平均 {liveSig.avg.toFixed(2)}dBm</span>}
+                                <span>{samples.length} 回</span>
+                            </div>
+                        </>}
+                    </div>
+                    : <div className="card-result">
+                        {result?.error
+                            ? <span className="result-error" title={result.error}>{result.error}</span>
+                            : result
+                                ? <>
+                                    {result.cn && (
+                                        <span className="result-metric">
+                                            <span className="metric-name">C/N</span>
+                                            <b>{result.cn.avg.toFixed(2)}</b><span className="unit">dB</span>
+                                            <Tag minimal intent={levelIntent(result.cn.avg)}>{levelLabel(result.cn.avg)}</Tag>
+                                        </span>
+                                    )}
+                                    {result.sig && (
+                                        <span className="result-metric">
+                                            <span className="metric-name">SIG</span>
+                                            <b>{result.sig.avg.toFixed(2)}</b><span className="unit">dBm</span>
+                                        </span>
+                                    )}
+                                    {!result.cn && !result.sig && <span className="result-none">値を取得できませんでした</span>}
+                                </>
+                                : <span className="result-none">未測定</span>
+                        }
+                    </div>
+                }
+
+                <div className="card-actions">
+                    {isActive
+                        ? <Button small intent="danger" icon="stop" text="停止" onClick={stop} fill />
+                        : <Button
+                            small
+                            icon="satellite"
+                            text={result ? "再測定" : "確認"}
+                            disabled={configuredTuners.length === 0 || activeKey !== null}
+                            onClick={() => start(ch)}
+                            fill
+                        />
+                    }
+                </div>
+            </div>
+        );
+    };
 
     return (
         <div id="route-signal-view">
@@ -288,92 +455,45 @@ export const SignalView: React.FC = () => {
                     <Callout intent="danger" title="信号を確認できませんでした">{checkError}</Callout>
                 )}
 
-                {activeKey && (
-                    <Callout className="reading" intent={hasCN ? levelIntent(latest.level) : "primary"}>
-                        <div className="reading-head">
-                            <span className="reading-channel">{activeKey}</span>
-                            {tunerName && <Tag minimal>{tunerName}</Tag>}
-                            <Button small icon="stop" text="停止" onClick={stop} />
-                        </div>
-                        {connecting && <div className="reading-waiting"><Spinner size={16} /> チューナーを起動しています...</div>}
-                        {latest && <>
-                            {hasCN && (
-                                <div className="reading-level">
-                                    <span className="metric-name">C/N</span>
-                                    {latest.level.toFixed(2)}<span className="unit">dB</span>
-                                    <Tag intent={levelIntent(latest.level)}>{levelLabel(latest.level)}</Tag>
-                                </div>
-                            )}
-                            {hasSIG && (
-                                <div className={hasCN ? "reading-strength" : "reading-level"}>
-                                    <span className="metric-name">SIG</span>
-                                    {latest.strength.toFixed(2)}<span className="unit">dBm</span>
-                                </div>
-                            )}
-                            <Sparkline
-                                values={hasCN ? cnValues : sigValues}
-                                floor={hasCN ? 0 : undefined}
-                                ceil={hasCN ? 35 : undefined}
-                            />
-                            <div className="reading-stats">
-                                {cn && <span>C/N 最小 {cn.min.toFixed(2)}dB / 最大 {cn.max.toFixed(2)}dB / 平均 {cn.avg.toFixed(2)}dB</span>}
-                                {sig && <span>SIG 最小 {sig.min.toFixed(2)}dBm / 最大 {sig.max.toFixed(2)}dBm / 平均 {sig.avg.toFixed(2)}dBm</span>}
-                                <span>{samples.length} 回</span>
-                            </div>
-                        </>}
-                    </Callout>
-                )}
-
-                {checkError && (
-                    <Callout intent="danger" title="信号を確認できませんでした">{checkError}</Callout>
-                )}
-
                 <div className="toolbar">
+                    <InputGroup
+                        leftIcon="search"
+                        placeholder="チャンネル・名前で絞り込み..."
+                        value={query}
+                        onChange={(e) => setQuery(e.target.value)}
+                        rightElement={query
+                            ? <Button variant="minimal" icon="cross" onClick={() => setQuery("")} />
+                            : undefined}
+                    />
                     <HTMLSelect
                         value={typeFilter}
                         onChange={(e) => setTypeFilter(e.target.value)}
                         options={[{ label: "すべての種別", value: "" }, ...types.map(t => ({ label: t, value: t }))]}
                     />
-                    <span className="count">{visible.length} チャンネル</span>
+                    <Switch
+                        checked={measuredOnly}
+                        label="測定済みのみ"
+                        onChange={(e) => setMeasuredOnly(e.currentTarget.checked)}
+                    />
+                    <span className="count">{shown} / {enabled.length} チャンネル</span>
                 </div>
 
-                {visible.length === 0
-                    ? <NonIdealState icon="offline" title="チャンネルがありません" description="チャンネル設定でチャンネルを追加してください。" />
-                    : <HTMLTable className="signal-table" striped interactive={false}>
-                        <thead>
-                            <tr>
-                                <th>種別</th>
-                                <th>チャンネル</th>
-                                <th>名前</th>
-                                <th className="action"></th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {visible.map((ch, i) => {
-                                const key = `${ch.type}/${ch.channel}`;
-                                const isActive = activeKey === key;
-                                return (
-                                    <tr key={`${key}-${i}`} className={isActive ? "active" : ""}>
-                                        <td><Tag minimal>{ch.type}</Tag></td>
-                                        <td className="channel">{ch.channel}</td>
-                                        <td className="name">{ch.name}</td>
-                                        <td className="action">
-                                            {isActive
-                                                ? <Button small intent="danger" icon="stop" text="停止" onClick={stop} />
-                                                : <Button
-                                                    small
-                                                    icon="satellite"
-                                                    text="確認"
-                                                    disabled={configuredTuners.length === 0 || activeKey !== null}
-                                                    onClick={() => start(ch)}
-                                                />
-                                            }
-                                        </td>
-                                    </tr>
-                                );
-                            })}
-                        </tbody>
-                    </HTMLTable>
+                {shown === 0
+                    ? <NonIdealState
+                        icon="search"
+                        title="該当するチャンネルがありません"
+                        description={enabled.length === 0
+                            ? "チャンネル設定でチャンネルを追加してください。"
+                            : "絞り込み条件を変更してください。"}
+                    />
+                    : groups.map(([type, list]) => (
+                        <section className="type-group" key={type}>
+                            <h4 className="group-head">
+                                {type}<span className="group-count">{list.length}</span>
+                            </h4>
+                            <div className="card-grid">{list.map(renderCard)}</div>
+                        </section>
+                    ))
                 }
             </div>
         </div>
