@@ -55,6 +55,35 @@ export function getTuningChannelType(type: apid.ChannelType): apid.ChannelType {
     return type === "GR-ALT" ? "GR" : type;
 }
 
+export class WhereQueryError extends Error {
+    readonly code = "WHERE_QUERY";
+    readonly status = 400;
+
+    constructor() {
+        super("$where is not allowed");
+        this.name = "WhereQueryError";
+    }
+}
+
+export function rejectWhere(query: unknown, seen?: WeakSet<object>): void {
+    if (query === null || typeof query !== "object") {
+        return;
+    }
+
+    const visited = seen || new WeakSet<object>();
+    if (visited.has(query)) {
+        return;
+    }
+    visited.add(query);
+
+    for (const key in query) {
+        if (key === "$where") {
+            throw new WhereQueryError();
+        }
+        rejectWhere((query as { [key: string]: unknown })[key], visited);
+    }
+}
+
 export const deepClone = rfdc();
 
 export function updateObject<T, U>(target: T, input: U): boolean;
@@ -122,6 +151,31 @@ export function decodeUTF8(buffer: Uint8Array | Buffer): string {
         return "";
     }
     return Buffer.from(buffer).toString("utf8");
+}
+
+const JSON_ARRAY_CHUNK_LENGTH = 16 * 1024;
+
+/** 配列を連結した JSON 配列を、全体を 1 つの文字列にせず一定の長さごとに文字列化する */
+export function* stringifyJSONArray(...arrays: readonly unknown[][]): Generator<string> {
+    let chunk = "[";
+    let first = true;
+    for (const array of arrays) {
+        for (const item of array) {
+            const json = JSON.stringify(item);
+            // JSON にできない要素 (undefined や関数) は、従来 (yieldable-json) と同じく出力しない
+            // (要素の中にある配列では、JSON.stringify と同じく null になる)
+            if (json === undefined) {
+                continue;
+            }
+            chunk += (first ? "" : ",") + json;
+            first = false;
+            if (chunk.length >= JSON_ARRAY_CHUNK_LENGTH) {
+                yield chunk;
+                chunk = "";
+            }
+        }
+    }
+    yield chunk + "]";
 }
 
 export function getTimeFromMJD(buffer: Uint8Array | Buffer): number {
