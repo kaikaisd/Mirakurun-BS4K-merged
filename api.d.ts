@@ -181,7 +181,8 @@ export interface TunerDevice {
     name: string;
     types: ChannelType[];
     command: string;
-    pid: number;
+    /** `null` when no process is running (including when the tuner accesses the DVB device directly). */
+    pid: number | null;
     users: TunerUser[];
     isAvailable: boolean;
     isRemote: boolean;
@@ -219,7 +220,8 @@ export interface StreamInfo {
 }
 
 export interface TunerProcess {
-    pid: number;
+    /** `null` when the tuner accesses the DVB device directly (no process). */
+    pid: number | null;
 }
 
 export interface JobScheduleItem {
@@ -327,6 +329,11 @@ export interface ConfigTunersItem {
     commandSignal?: string;
     /** [dvb] dvr adapter device path */
     dvbDevicePath?: string;
+    /**
+     * [dvb] `true` to run the dvbv5-zap command instead of accessing the DVB device directly.
+     * DVB Direct tunes ISDB-T / ISDB-S only: BS4K channels always run `commandBS4K` (or `command`).
+     */
+    disableDvbDirect?: boolean;
     /** Optional device path checked before starting this tuner. Falls back to dvbDevicePath when omitted. */
     checkDevicePath?: string;
     /** Seconds to skip this tuner after its command exits with failure. */
