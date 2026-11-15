@@ -17,6 +17,8 @@ import rfdc from "rfdc";
 import ChannelItem from "./ChannelItem";
 import * as apid from "../../api";
 
+export { parseCommandForSpawn } from "./command";
+
 export interface User {
     readonly id: string;
     readonly priority: number;
@@ -153,7 +155,7 @@ export function decodeUTF8(buffer: Uint8Array | Buffer): string {
     return Buffer.from(buffer).toString("utf8");
 }
 
-const JSON_ARRAY_CHUNK_LENGTH = 16 * 1024;
+const JSON_ARRAY_CHUNK_LENGTH = 32 * 1024;
 
 /** 配列を連結した JSON 配列を、全体を 1 つの文字列にせず一定の長さごとに文字列化する */
 export function* stringifyJSONArray(...arrays: readonly unknown[][]): Generator<string> {
@@ -199,48 +201,4 @@ export function replaceCommandTemplate(template: string, vars: Record<string, st
     return template.replace(/<([a-z0-9\-_\.]+)>/gi, (match, key) => {
         return vars[key] !== undefined ? String(vars[key]) : "";
     });
-}
-
-export function parseCommandForSpawn(cmdString: string): { command: string; args: string[] } {
-    let inQuote = false;
-    let quoteChar = "";
-    let current = "";
-    const parts: string[] = [];
-
-    // Parse the command string character by character
-    for (let i = 0; i < cmdString.length; i++) {
-        const char = cmdString[i];
-
-        if ((char === `"` || char === `'`) && (!inQuote || char === quoteChar)) {
-            // Toggle quote state if we encounter a quote character
-            inQuote = !inQuote;
-            quoteChar = inQuote ? char : "";
-        } else if (char === " " && !inQuote) {
-            // Space outside of quotes indicates a new part
-            if (current) {
-                parts.push(current);
-                current = "";
-            }
-        } else {
-            // Add character to the current part
-            current += char;
-        }
-    }
-
-    // Add the last part if there is one
-    if (current) {
-        parts.push(current);
-    }
-
-    if (parts.length === 0) {
-        throw new Error("Invalid command string");
-    }
-
-    // First part is the command, the rest are arguments
-    const result: { command: string; args: string[] } = {
-        command: parts[0],
-        args: parts.slice(1)
-    };
-
-    return result;
 }
